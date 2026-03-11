@@ -13,6 +13,12 @@ const EXCLUDED_DIRS := [".godot", ".git"]
 # Individual file names to always skip.
 const EXCLUDED_FILES := [".DS_Store", "Thumbs.db", "ehthumbs.db", "Desktop.ini"]
 
+# Hint shown when a 403 permission error is detected during push.
+const TOKEN_PERMISSION_HINT := "[color=yellow]A 403 error means your token does not have write permission. " \
+	+ "If your repository is in an organization (e.g. GitHub Classroom), try using a " \
+	+ "classic token with the 'repo' scope instead of a fine-grained token. " \
+	+ "See the README for details.[/color]"
+
 # --- UI references ---
 var _repo_url_input: LineEdit
 var _token_input: LineEdit
@@ -405,6 +411,7 @@ func _do_push() -> void:
 	var tree_entries: Array = []
 	var changed_count: int = 0
 	var upload_errors: int = 0
+	var had_permission_error := false
 
 	for i in range(local_files.size()):
 		var rel_path: String = local_files[i]
@@ -425,7 +432,10 @@ func _do_push() -> void:
 			# New or modified – upload the blob.
 			var blob_result: Dictionary = await _api.create_blob(content)
 			if blob_result.has("error"):
-				_append_status("[color=red]  Upload failed: " + rel_path + " – " + str(blob_result.error) + "[/color]")
+				var err_msg: String = str(blob_result.error)
+				_append_status("[color=red]  Upload failed: " + rel_path + " – " + err_msg + "[/color]")
+				if "403" in err_msg:
+					had_permission_error = true
 				upload_errors += 1
 				continue
 			tree_entries.append({"path": rel_path, "mode": "100644", "type": "blob", "sha": blob_result.data.sha})
@@ -433,10 +443,8 @@ func _do_push() -> void:
 
 	if upload_errors > 0:
 		_append_status("[color=red]Push failed: " + str(upload_errors) + " file(s) could not be uploaded.[/color]")
-		if "403" in _status_label.get_parsed_text():
-			_append_status("[color=yellow]A 403 error means your token does not have write permission. " \
-				+ "If your repository is in an organization (e.g. GitHub Classroom), try using a classic token with the 'repo' scope instead of a fine-grained token. " \
-				+ "See the README for details.[/color]")
+		if had_permission_error:
+			_append_status(TOKEN_PERMISSION_HINT)
 		_progress_bar.visible = false
 		return
 
