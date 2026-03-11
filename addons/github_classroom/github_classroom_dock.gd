@@ -8,10 +8,10 @@ extends Control
 const CONFIG_PATH := "user://github_classroom_config.cfg"
 
 # Directories to skip when scanning/downloading project files.
-const EXCLUDED_DIRS: PackedStringArray = PackedStringArray([".godot", ".git"])
+const EXCLUDED_DIRS := [".godot", ".git"]
 
 # Individual file names to always skip.
-const EXCLUDED_FILES: PackedStringArray = PackedStringArray([".DS_Store", "Thumbs.db", "ehthumbs.db", "Desktop.ini"])
+const EXCLUDED_FILES := [".DS_Store", "Thumbs.db", "ehthumbs.db", "Desktop.ini"]
 
 # --- UI references ---
 var _repo_url_input: LineEdit
@@ -286,7 +286,7 @@ func _do_pull() -> void:
 
 	# 2 – Get full recursive tree.
 	_append_status("Getting file list...")
-	var tree_result: Dictionary = await _api.get_tree(tree_sha)
+	var tree_result: Dictionary = await _api.get_git_tree(tree_sha)
 	if tree_result.has("error"):
 		_append_status("[color=red]Error: " + str(tree_result.error) + "[/color]")
 		_progress_bar.visible = false
@@ -385,7 +385,7 @@ func _do_push() -> void:
 	var remote_files: Dictionary = {}
 	if not base_tree_sha.is_empty():
 		_append_status("Comparing files...")
-		var remote_tree_result: Dictionary = await _api.get_tree(base_tree_sha)
+		var remote_tree_result: Dictionary = await _api.get_git_tree(base_tree_sha)
 		if not remote_tree_result.has("error"):
 			for item in remote_tree_result.data.tree:
 				if item.type == "blob":

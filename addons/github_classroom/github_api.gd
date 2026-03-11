@@ -91,7 +91,7 @@ func get_branch() -> Dictionary:
 
 
 ## Get the full file tree for a given tree SHA (recursive).
-func get_tree(tree_sha: String) -> Dictionary:
+func get_git_tree(tree_sha: String) -> Dictionary:
 	return await _make_request(
 		HTTPClient.METHOD_GET,
 		"/repos/%s/%s/git/trees/%s?recursive=1" % [_owner, _repo, tree_sha],
