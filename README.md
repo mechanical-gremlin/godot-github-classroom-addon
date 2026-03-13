@@ -12,6 +12,10 @@ Everything happens through a small panel inside the Godot editor, making it idea
 |---------|-------------|
 | **Pull** | Download the latest version of the project from GitHub with one click. |
 | **Push** | Upload changes to GitHub with a short commit message. |
+| **Auto-Push** | Optionally push automatically when saving the project or closing the editor. |
+| **Default Commit Message** | Commit message is optional — a timestamped default is generated when left blank. |
+| **Teacher / Student Roles** | Teachers can browse all student repos in an organization; students see only their own. |
+| **Classroom Repo Browser** | Load and select repositories from a GitHub Classroom organization. |
 | **No Git required** | Uses the GitHub REST API directly — Git does not need to be installed. |
 | **Simple UI** | One panel with only the controls students need. |
 | **Secure** | The GitHub token is stored locally outside the project folder and is never committed. |
@@ -81,10 +85,50 @@ Fine-grained tokens offer narrower permissions but may require extra setup for o
 1. **Start of class** — Click **Pull** to make sure you have the latest version.
 2. **Work on your project** — Add scenes, write scripts, create art, etc.
 3. **End of class**:
-   - Type a short commit message describing what you did (e.g. *"Added player movement"*).
+   - Type a short commit message describing what you did (e.g. *"Added player movement"*), or leave it blank for an automatic timestamp message.
    - Click **Push** to save your work to GitHub.
 
 That's it! Your changes are now safely stored on GitHub.
+
+---
+
+## Auto-Push
+
+Instead of manually clicking **Push**, you can configure the addon to push automatically:
+
+1. In the **Settings** section, find the **Auto-Push** dropdown.
+2. Choose one of:
+   - **Manual Only** (default) — push only when you click the Push button.
+   - **Auto-Push on Save** — automatically push every time you save the project. Also triggers when the editor closes.
+   - **Auto-Push on Close** — attempts to push when the editor is closed. Note: due to technical limitations, this push may not always complete if the editor shuts down before the upload finishes. For the most reliable automatic pushes, use **Auto-Push on Save**.
+3. Click **Save Settings**.
+
+> **Tip:** When auto-push is enabled and no commit message is entered, a default message with the current date and time is used automatically.
+
+---
+
+## Teacher / Student Roles and Classroom Repo Browser
+
+The addon supports **Teacher** and **Student** roles for browsing repositories within a GitHub Classroom organization.
+
+### For Teachers
+
+1. Select **Teacher** from the **Role** dropdown.
+2. Enter the **Organization** name (the GitHub org used by your classroom).
+3. Enter your **GitHub Token** and click **Save Settings**.
+4. Click **Load Repos** in the **Classroom** section.
+5. The addon verifies you are an **admin/owner** of the organization. If verified, all student repositories are listed.
+6. Click a repository in the list to auto-fill the **Repository URL**, then use **Pull** to download the student's project for review.
+
+### For Students
+
+1. Select **Student** from the **Role** dropdown (this is the default).
+2. Enter the **Organization** name.
+3. Enter your **GitHub Token** and click **Save Settings**.
+4. Click **Load Repos** — only repositories containing your GitHub username are shown (matching the `{assignment}-{username}` naming convention used by GitHub Classroom).
+5. Click your repository in the list to auto-fill the **Repository URL**, then use **Pull** / **Push** as usual.
+
+> **Note:** You can still enter the Repository URL manually if you prefer — the Classroom section is optional.
 
 ---
 
@@ -119,6 +163,9 @@ No local Git installation is needed at all.
 | **Connection failed** | Check your internet connection and try again. |
 | **No changes to push** | Your local files already match what is on GitHub. |
 | **Push failed: X file(s) could not be uploaded** | One or more files failed to upload. Check the error messages above for details. A 403 error usually means a token permissions problem (see above). |
+| **Teacher access requires organization admin/owner privileges** | Only organization owners/admins can use the Teacher role. Ask your organization admin to grant you the owner role, or use the Student role. |
+| **No repositories found** (Load Repos) | Make sure the organization name is correct and your token has access. Students: your GitHub username must appear in the repository name. |
+| **Authentication failed** (Load Repos) | Your token could not be verified. Check that it is correct and not expired. |
 
 ---
 

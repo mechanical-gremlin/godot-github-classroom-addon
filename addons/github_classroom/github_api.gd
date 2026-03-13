@@ -163,3 +163,38 @@ func create_ref(commit_sha: String) -> Dictionary:
 		"/repos/%s/%s/git/refs" % [_owner, _repo],
 		{"ref": "refs/heads/" + _branch, "sha": commit_sha},
 	)
+
+
+# ---------------------------------------------------------------------------
+# Organization / user endpoints (for classroom role features)
+# ---------------------------------------------------------------------------
+
+## Get the authenticated user's information. Useful for verifying the token
+## and retrieving the GitHub username.
+func get_authenticated_user() -> Dictionary:
+	return await _make_request(HTTPClient.METHOD_GET, "/user")
+
+
+## Get the authenticated user's membership in an organization.
+## The response includes a "role" field ("admin" or "member").
+func get_org_membership(org: String, username: String) -> Dictionary:
+	return await _make_request(
+		HTTPClient.METHOD_GET,
+		"/orgs/%s/memberships/%s" % [org, username],
+	)
+
+
+## Get repositories belonging to an organization (paginated, 100 per page).
+func get_org_repos(org: String, page: int = 1) -> Dictionary:
+	return await _make_request(
+		HTTPClient.METHOD_GET,
+		"/orgs/%s/repos?per_page=100&page=%d&sort=updated&direction=desc" % [org, page],
+	)
+
+
+## Get the authenticated user's repositories (paginated, 100 per page).
+func get_user_repos(page: int = 1) -> Dictionary:
+	return await _make_request(
+		HTTPClient.METHOD_GET,
+		"/user/repos?per_page=100&page=%d&affiliation=collaborator,organization_member&sort=updated&direction=desc" % [page],
+	)
