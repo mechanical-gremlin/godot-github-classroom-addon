@@ -15,7 +15,7 @@ Everything happens through a small panel inside the Godot editor, making it idea
 | **Auto-Push** | Optionally push automatically when saving the project or closing the editor. |
 | **Default Commit Message** | Commit message is optional — a timestamped default is generated when left blank. |
 | **Teacher / Student Roles** | Teachers can browse all student repos in an organization; students see only their own. |
-| **Classroom Repo Browser** | Load and select repositories from a GitHub Classroom organization. |
+| **Classroom Repo Browser** | Load and select repositories from a GitHub Classroom organization. Teachers see repos grouped by assignment. |
 | **No Git required** | Uses the GitHub REST API directly — Git does not need to be installed. |
 | **Simple UI** | One panel with only the controls students need. |
 | **Secure** | The GitHub token is stored locally outside the project folder and is never committed. |
@@ -119,8 +119,11 @@ The addon supports **Teacher** and **Student** roles for browsing repositories w
 2. Enter the **Organization** name (the GitHub org used by your classroom).
 3. Enter your **GitHub Token** and click **Save Settings**.
 4. Click **Load Repos** in the **Classroom** section.
-5. The addon verifies you are an **admin/owner** of the organization. If verified, all student repositories are listed.
-6. Click a repository in the list to auto-fill the **Repository URL**, then use **Pull** to download the student's project for review.
+5. The addon verifies you are an **admin/owner** of the organization. If verified, all student repositories are loaded and organized into collapsible **assignment folders**.
+   - Repositories that follow the GitHub Classroom naming convention (`{assignment}-{username}`) are automatically grouped by assignment name.
+   - Expand a folder to see the individual student submissions for that assignment.
+   - Repositories that don't match any shared assignment prefix appear at the top level.
+6. Click a student repository in the tree to auto-fill the **Repository URL**, then use **Pull** to download the student's project for review.
 
 ### For Students
 
