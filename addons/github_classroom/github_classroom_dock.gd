@@ -19,11 +19,21 @@ const TOKEN_PERMISSION_HINT := "[color=yellow]A 403 error means your token does 
 	+ "classic token with the 'repo' scope instead of a fine-grained token. " \
 	+ "See the README for details.[/color]"
 
+# Auto-push mode constants.
+const AUTO_PUSH_MANUAL := 0
+const AUTO_PUSH_ON_SAVE := 1
+const AUTO_PUSH_ON_CLOSE := 2
+
 # --- UI references ---
+var _role_option: OptionButton
+var _org_input: LineEdit
 var _repo_url_input: LineEdit
 var _token_input: LineEdit
 var _branch_input: LineEdit
+var _auto_push_option: OptionButton
 var _save_button: Button
+var _load_repos_button: Button
+var _repo_list: ItemList
 var _commit_msg_input: TextEdit
 var _pull_button: Button
 var _push_button: Button
@@ -32,6 +42,11 @@ var _progress_bar: ProgressBar
 
 # --- API node ---
 var _api: Node
+
+# --- State ---
+var _github_username: String = ""
+var _is_pushing: bool = false
+var _loaded_repos: Array = []
 
 
 # ===========================================================================
@@ -63,9 +78,21 @@ func _build_ui() -> void:
 	# ---- Settings section ----
 	_add_section_header(vbox, "Settings")
 
+	_add_label(vbox, "Role:")
+	_role_option = OptionButton.new()
+	_role_option.add_item("Student", 0)
+	_role_option.add_item("Teacher", 1)
+	_role_option.tooltip_text = "Select your role. Teachers can view all student repositories in the organization."
+	_role_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.add_child(_role_option)
+
+	_add_label(vbox, "Organization:")
+	_org_input = _add_line_edit(vbox, "github-classroom-org")
+	_org_input.tooltip_text = "Your GitHub Classroom organization name. Used with Load Repos to browse assignments."
+
 	_add_label(vbox, "Repository URL:")
 	_repo_url_input = _add_line_edit(vbox, "https://github.com/owner/repo")
-	_repo_url_input.tooltip_text = "Paste the repository link from GitHub Classroom here."
+	_repo_url_input.tooltip_text = "Paste the repository link from GitHub Classroom here, or select one from the Classroom section below."
 
 	_add_label(vbox, "GitHub Token:")
 	_token_input = _add_line_edit(vbox, "ghp_xxxxxxxxxxxx")
@@ -77,6 +104,15 @@ func _build_ui() -> void:
 	_branch_input.text = "main"
 	_branch_input.tooltip_text = "Usually 'main'. Only change this if your teacher tells you to."
 
+	_add_label(vbox, "Auto-Push:")
+	_auto_push_option = OptionButton.new()
+	_auto_push_option.add_item("Manual Only", AUTO_PUSH_MANUAL)
+	_auto_push_option.add_item("Auto-Push on Save", AUTO_PUSH_ON_SAVE)
+	_auto_push_option.add_item("Auto-Push on Close", AUTO_PUSH_ON_CLOSE)
+	_auto_push_option.tooltip_text = "Automatically push changes when saving the project or closing the editor."
+	_auto_push_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.add_child(_auto_push_option)
+
 	_save_button = Button.new()
 	_save_button.text = "Save Settings"
 	_save_button.pressed.connect(_on_save_pressed)
@@ -84,13 +120,31 @@ func _build_ui() -> void:
 
 	vbox.add_child(HSeparator.new())
 
+	# ---- Classroom section ----
+	_add_section_header(vbox, "Classroom")
+
+	_load_repos_button = Button.new()
+	_load_repos_button.text = "Load Repos"
+	_load_repos_button.tooltip_text = "Load repositories from your GitHub Classroom organization. Requires token and organization name."
+	_load_repos_button.pressed.connect(_on_load_repos_pressed)
+	vbox.add_child(_load_repos_button)
+
+	_repo_list = ItemList.new()
+	_repo_list.custom_minimum_size = Vector2(0, 100)
+	_repo_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_repo_list.item_selected.connect(_on_repo_selected)
+	_repo_list.tooltip_text = "Select a repository to auto-fill the Repository URL above."
+	vbox.add_child(_repo_list)
+
+	vbox.add_child(HSeparator.new())
+
 	# ---- Sync section ----
 	_add_section_header(vbox, "Sync")
 
-	_add_label(vbox, "Commit Message:")
+	_add_label(vbox, "Commit Message (optional):")
 	_commit_msg_input = TextEdit.new()
-	_commit_msg_input.placeholder_text = "Describe what you changed..."
-	_commit_msg_input.tooltip_text = "Write a short description of the changes you made."
+	_commit_msg_input.placeholder_text = "Optional – auto-generates if left blank."
+	_commit_msg_input.tooltip_text = "Write a short description of your changes, or leave blank for a default message with the current date and time."
 	_commit_msg_input.custom_minimum_size = Vector2(0, 60)
 	_commit_msg_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vbox.add_child(_commit_msg_input)
@@ -179,6 +233,9 @@ func _save_settings() -> void:
 	config.set_value("github", "repo_url", _repo_url_input.text)
 	config.set_value("github", "token", _token_input.text)
 	config.set_value("github", "branch", _branch_input.text)
+	config.set_value("github", "role", _role_option.selected)
+	config.set_value("github", "organization", _org_input.text)
+	config.set_value("github", "auto_push", _auto_push_option.selected)
 	config.save(CONFIG_PATH)
 
 
@@ -188,6 +245,9 @@ func _load_settings() -> void:
 		_repo_url_input.text = config.get_value("github", "repo_url", "")
 		_token_input.text = config.get_value("github", "token", "")
 		_branch_input.text = config.get_value("github", "branch", "main")
+		_role_option.selected = config.get_value("github", "role", 0)
+		_org_input.text = config.get_value("github", "organization", "")
+		_auto_push_option.selected = config.get_value("github", "auto_push", 0)
 
 
 # ===========================================================================
@@ -242,6 +302,7 @@ func _set_buttons_enabled(enabled: bool) -> void:
 	_pull_button.disabled = not enabled
 	_push_button.disabled = not enabled
 	_save_button.disabled = not enabled
+	_load_repos_button.disabled = not enabled
 
 
 # ===========================================================================
@@ -266,9 +327,34 @@ func _on_push_pressed() -> void:
 	if not _configure_api():
 		return
 	_save_settings()
+	_is_pushing = true
 	_set_buttons_enabled(false)
 	await _do_push()
 	_set_buttons_enabled(true)
+	_is_pushing = false
+
+
+func _on_load_repos_pressed() -> void:
+	var token := _token_input.text.strip_edges()
+	if token.is_empty():
+		_set_status("[color=red]Please enter your GitHub token.[/color]")
+		return
+	var org := _org_input.text.strip_edges()
+	if org.is_empty():
+		_set_status("[color=red]Please enter your GitHub Classroom organization name.[/color]")
+		return
+	# Set token for API calls (owner/repo not needed for org/user endpoints).
+	_api.setup(token, "", "", "")
+	_set_buttons_enabled(false)
+	await _do_load_repos(org)
+	_set_buttons_enabled(true)
+
+
+func _on_repo_selected(index: int) -> void:
+	if index >= 0 and index < _loaded_repos.size():
+		var repo: Dictionary = _loaded_repos[index]
+		_repo_url_input.text = "https://github.com/" + repo.owner + "/" + repo.name
+		_set_status("[color=green]Selected: " + str(repo.name) + "[/color]")
 
 
 # ===========================================================================
@@ -361,8 +447,10 @@ func _do_pull() -> void:
 func _do_push() -> void:
 	var message := _commit_msg_input.text.strip_edges()
 	if message.is_empty():
-		_set_status("[color=red]Please enter a commit message describing your changes.[/color]")
-		return
+		var dt := Time.get_datetime_dict_from_system()
+		message = "Update project files – %04d-%02d-%02d %02d:%02d:%02d" % [
+			dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second
+		]
 
 	_set_status("[color=yellow]Pushing to GitHub...[/color]")
 	_progress_bar.visible = true
@@ -493,6 +581,113 @@ func _do_push() -> void:
 
 	_append_status("[color=green]Push complete! " + str(changed_count) + " file(s) updated.[/color]")
 	_commit_msg_input.text = ""
+
+
+# ===========================================================================
+# Classroom repo loading
+# ===========================================================================
+
+func _do_load_repos(org: String) -> void:
+	_set_status("[color=yellow]Loading repositories...[/color]")
+	_repo_list.clear()
+	_loaded_repos.clear()
+
+	# 1 – Verify token and get username.
+	var user_result: Dictionary = await _api.get_authenticated_user()
+	if user_result.has("error"):
+		_set_status("[color=red]Authentication failed: " + str(user_result.error) + "[/color]")
+		return
+	_github_username = str(user_result.data.login)
+	_append_status("Signed in as @" + _github_username)
+
+	var is_teacher := (_role_option.selected == 1)
+
+	if is_teacher:
+		# 2a – Verify the user is an org admin (teacher).
+		var membership_result: Dictionary = await _api.get_org_membership(org, _github_username)
+		if membership_result.has("error"):
+			_set_status("[color=red]Could not verify organization membership: " + str(membership_result.error) + "[/color]")
+			_append_status("[color=yellow]Teacher access requires organization admin/owner privileges.[/color]")
+			return
+		var role_str: String = str(membership_result.data.get("role", ""))
+		if role_str != "admin":
+			_set_status("[color=red]Teacher access requires organization admin/owner privileges. Your role is '" + role_str + "'.[/color]")
+			return
+		_append_status("Verified as organization admin.")
+
+		# 3a – Load all org repos (paginated).
+		var page := 1
+		while true:
+			var repos_result: Dictionary = await _api.get_org_repos(org, page)
+			if repos_result.has("error"):
+				_append_status("[color=red]Error loading repos: " + str(repos_result.error) + "[/color]")
+				break
+			if not (repos_result.data is Array) or repos_result.data.is_empty():
+				break
+			for repo in repos_result.data:
+				_loaded_repos.append({
+					"name": str(repo.name),
+					"owner": str(repo.owner.login),
+				})
+				_repo_list.add_item(str(repo.name))
+			if repos_result.data.size() < 100:
+				break
+			page += 1
+	else:
+		# 2b/3b – Student: load user repos filtered by org and username.
+		var page := 1
+		var org_lower := org.to_lower()
+		var username_lower := _github_username.to_lower()
+		while true:
+			var repos_result: Dictionary = await _api.get_user_repos(page)
+			if repos_result.has("error"):
+				_append_status("[color=red]Error loading repos: " + str(repos_result.error) + "[/color]")
+				break
+			if not (repos_result.data is Array) or repos_result.data.is_empty():
+				break
+			for repo in repos_result.data:
+				var owner_name: String = str(repo.owner.login)
+				var repo_name: String = str(repo.name)
+				if owner_name.to_lower() == org_lower and username_lower in repo_name.to_lower():
+					_loaded_repos.append({
+						"name": repo_name,
+						"owner": owner_name,
+					})
+					_repo_list.add_item(repo_name)
+			if repos_result.data.size() < 100:
+				break
+			page += 1
+
+	if _loaded_repos.is_empty():
+		_append_status("[color=yellow]No repositories found.[/color]")
+	else:
+		_append_status("[color=green]Found " + str(_loaded_repos.size()) + " repositories.[/color]")
+
+
+# ===========================================================================
+# Auto-push hooks (called from plugin.gd)
+# ===========================================================================
+
+## Called by the plugin when the editor saves external data (project save).
+func _on_editor_save() -> void:
+	if _auto_push_option.selected == AUTO_PUSH_ON_SAVE and not _is_pushing:
+		_trigger_auto_push()
+
+
+## Called by the plugin when the editor is about to close.
+func _on_editor_close() -> void:
+	if _auto_push_option.selected == AUTO_PUSH_ON_CLOSE and not _is_pushing:
+		_trigger_auto_push()
+
+
+func _trigger_auto_push() -> void:
+	if not _configure_api():
+		return
+	_is_pushing = true
+	_set_buttons_enabled(false)
+	await _do_push()
+	_set_buttons_enabled(true)
+	_is_pushing = false
 
 
 # ===========================================================================
