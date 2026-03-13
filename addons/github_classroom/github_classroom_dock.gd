@@ -33,7 +33,7 @@ var _branch_input: LineEdit
 var _auto_push_option: OptionButton
 var _save_button: Button
 var _load_repos_button: Button
-var _repo_list: ItemList
+var _repo_tree: Tree
 var _commit_msg_input: TextEdit
 var _pull_button: Button
 var _push_button: Button
@@ -129,12 +129,13 @@ func _build_ui() -> void:
 	_load_repos_button.pressed.connect(_on_load_repos_pressed)
 	vbox.add_child(_load_repos_button)
 
-	_repo_list = ItemList.new()
-	_repo_list.custom_minimum_size = Vector2(0, 100)
-	_repo_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_repo_list.item_selected.connect(_on_repo_selected)
-	_repo_list.tooltip_text = "Select a repository to auto-fill the Repository URL above."
-	vbox.add_child(_repo_list)
+	_repo_tree = Tree.new()
+	_repo_tree.custom_minimum_size = Vector2(0, 100)
+	_repo_tree.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_repo_tree.hide_root = true
+	_repo_tree.item_selected.connect(_on_repo_tree_selected)
+	_repo_tree.tooltip_text = "Select a repository to auto-fill the Repository URL above."
+	vbox.add_child(_repo_tree)
 
 	vbox.add_child(HSeparator.new())
 
@@ -350,9 +351,13 @@ func _on_load_repos_pressed() -> void:
 	_set_buttons_enabled(true)
 
 
-func _on_repo_selected(index: int) -> void:
-	if index >= 0 and index < _loaded_repos.size():
-		var repo: Dictionary = _loaded_repos[index]
+func _on_repo_tree_selected() -> void:
+	var selected := _repo_tree.get_selected()
+	if selected == null:
+		return
+	var meta = selected.get_metadata(0)
+	if meta is int and meta >= 0 and meta < _loaded_repos.size():
+		var repo: Dictionary = _loaded_repos[meta]
 		_repo_url_input.text = "https://github.com/" + repo.owner + "/" + repo.name
 		_set_status("[color=green]Selected: " + str(repo.name) + "[/color]")
 
@@ -589,7 +594,7 @@ func _do_push() -> void:
 
 func _do_load_repos(org: String) -> void:
 	_set_status("[color=yellow]Loading repositories...[/color]")
-	_repo_list.clear()
+	_repo_tree.clear()
 	_loaded_repos.clear()
 
 	# 1 – Verify token and get username.
@@ -629,10 +634,12 @@ func _do_load_repos(org: String) -> void:
 					"name": str(repo.name),
 					"owner": str(repo.owner.login),
 				})
-				_repo_list.add_item(str(repo.name))
 			if repos_result.data.size() < 100:
 				break
 			page += 1
+
+		# Build the grouped tree view for teachers.
+		_populate_teacher_tree()
 	else:
 		# 2b/3b – Student: load user repos filtered by org and username.
 		var page := 1
@@ -653,15 +660,87 @@ func _do_load_repos(org: String) -> void:
 						"name": repo_name,
 						"owner": owner_name,
 					})
-					_repo_list.add_item(repo_name)
 			if repos_result.data.size() < 100:
 				break
 			page += 1
+
+		# Build a flat tree view for students.
+		_populate_student_tree()
 
 	if _loaded_repos.is_empty():
 		_append_status("[color=yellow]No repositories found.[/color]")
 	else:
 		_append_status("[color=green]Found " + str(_loaded_repos.size()) + " repositories.[/color]")
+
+
+## Build a grouped tree view for teachers.  Repos following the GitHub
+## Classroom naming convention ({assignment}-{username}) are grouped
+## under collapsible assignment folders.
+func _populate_teacher_tree() -> void:
+	var root := _repo_tree.create_item()
+
+	# 1 – Determine the assignment prefix for each repo.
+	#     Count how many repos share each possible hyphen-delimited prefix.
+	var prefix_counts := {}
+	for repo in _loaded_repos:
+		var parts: PackedStringArray = str(repo.name).split("-")
+		for i in range(1, parts.size()):
+			var prefix := "-".join(parts.slice(0, i))
+			prefix_counts[prefix] = prefix_counts.get(prefix, 0) + 1
+
+	# 2 – For each repo, find the longest prefix shared with at least one
+	#     other repo.  That prefix is the assignment name.
+	var assignment_for_repo: Array = []  # parallel to _loaded_repos
+	for repo in _loaded_repos:
+		var parts: PackedStringArray = str(repo.name).split("-")
+		var best_prefix := ""
+		for i in range(parts.size() - 1, 0, -1):
+			var prefix := "-".join(parts.slice(0, i))
+			if prefix_counts.get(prefix, 0) >= 2:
+				best_prefix = prefix
+				break
+		assignment_for_repo.append(best_prefix)
+
+	# 3 – Build ordered list of unique assignment names (preserving first-seen order).
+	var seen_assignments := {}
+	var assignment_order: Array = []
+	for idx in range(assignment_for_repo.size()):
+		var a: String = assignment_for_repo[idx]
+		if a != "" and not seen_assignments.has(a):
+			seen_assignments[a] = true
+			assignment_order.append(a)
+
+	# 4 – Create tree items.
+	var folder_items := {}  # assignment_name -> TreeItem
+	for assignment_name in assignment_order:
+		var folder := _repo_tree.create_item(root)
+		folder.set_text(0, assignment_name + "  (" + str(prefix_counts[assignment_name]) + ")")
+		folder.set_selectable(0, false)
+		folder.collapsed = true
+		folder_items[assignment_name] = folder
+
+	for idx in range(_loaded_repos.size()):
+		var repo_name: String = str(_loaded_repos[idx].name)
+		var assignment: String = assignment_for_repo[idx]
+		if assignment != "":
+			var student_label: String = repo_name.substr(assignment.length() + 1)
+			var child := _repo_tree.create_item(folder_items[assignment])
+			child.set_text(0, student_label)
+			child.set_tooltip_text(0, repo_name)
+			child.set_metadata(0, idx)
+		else:
+			var child := _repo_tree.create_item(root)
+			child.set_text(0, repo_name)
+			child.set_metadata(0, idx)
+
+
+## Build a flat tree view for students (no grouping).
+func _populate_student_tree() -> void:
+	var root := _repo_tree.create_item()
+	for idx in range(_loaded_repos.size()):
+		var child := _repo_tree.create_item(root)
+		child.set_text(0, str(_loaded_repos[idx].name))
+		child.set_metadata(0, idx)
 
 
 # ===========================================================================
