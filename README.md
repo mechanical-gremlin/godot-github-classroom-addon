@@ -10,12 +10,13 @@ Everything happens through a small panel inside the Godot editor, making it idea
 
 | Feature | Description |
 |---------|-------------|
-| **Pull** | Download the latest version of the project from GitHub with one click. |
-| **Push** | Upload changes to GitHub with a short commit message. |
-| **Auto-Push** | Optionally push automatically when saving the project or closing the editor. |
+| **⬇ Download Latest (Pull)** | Download the latest version of the project from GitHub with one click. |
+| **⬆ Save to GitHub (Push)** | Upload changes to GitHub with a short commit message. |
+| **Auto-Push on Save (default)** | Automatically pushes every time you save the project — no manual push needed. |
 | **Default Commit Message** | Commit message is optional — a timestamped default is generated when left blank. |
+| **Simple / Advanced View** | A toggle hides advanced options by default so beginners only see what they need. |
 | **Teacher / Student Roles** | Teachers can browse all student repos in an organization; students see only their own. |
-| **Classroom Repo Browser** | Load and select repositories from a GitHub Classroom organization. Teachers see repos grouped by assignment. |
+| **Classroom Repo Browser** | Load and select repositories from a GitHub Classroom organization. Click **Load My Assignments** to browse. |
 | **No Git required** | Uses the GitHub REST API directly — Git does not need to be installed. |
 | **Simple UI** | One panel with only the controls students need. |
 | **Secure** | The GitHub token is stored locally outside the project folder and is never committed. |
@@ -35,12 +36,14 @@ Everything happens through a small panel inside the Godot editor, making it idea
 1. Accept the GitHub Classroom assignment. This creates your own repository.
 2. Open the Godot project your teacher provided.
 3. Look for the **GitHubClassroom** panel on the right side of the editor.
-4. Enter three things:
-   - **Repository URL** — the link to *your* repository (e.g. `https://github.com/classroom-org/assignment-yourname`).
+4. Enter two things:
+   - **Organization** — the name of your GitHub Classroom organization (your teacher will give you this).
    - **GitHub Token** — a Personal Access Token you create on GitHub (see below).
-   - **Branch** — leave this as `main` unless your teacher says otherwise.
 5. Click **Save Settings**.
-6. Click **Pull** to download the starter code.
+6. Click **Load My Assignments** to see your assignment repository.
+7. Click your repository in the list, then click **⬇ Download Latest (Pull)** to download the starter code.
+
+> **Tip:** The addon defaults to **Auto-Push on Save** — your work is automatically saved to GitHub every time you save your Godot project. You don't need to click Push manually!
 
 ---
 
@@ -82,26 +85,48 @@ Fine-grained tokens offer narrower permissions but may require extra setup for o
 
 ## Daily Workflow
 
-1. **Start of class** — Click **Pull** to make sure you have the latest version.
+1. **Start of class** — Click **⬇ Download Latest (Pull)** to make sure you have the latest version.  
+   > A confirmation dialog will appear — click **Yes, Download** to proceed.
 2. **Work on your project** — Add scenes, write scripts, create art, etc.
-3. **End of class**:
-   - Type a short commit message describing what you did (e.g. *"Added player movement"*), or leave it blank for an automatic timestamp message.
-   - Click **Push** to save your work to GitHub.
+3. **Save as you go** — Because **Auto-Push on Save** is the default, your project is automatically saved to GitHub each time you press Ctrl+S (or use File → Save). You'll see a "Last saved to GitHub: Today at ..." message appear below the buttons.
+4. **End of class** — No extra steps needed! Your work is already safely stored on GitHub.
 
-That's it! Your changes are now safely stored on GitHub.
+> **Optional:** If you want to add a meaningful commit message, type it in the **Commit Message** box (visible in Advanced Options) and click **⬆ Save to GitHub (Push)** manually.
+
+---
+
+## Simple vs. Advanced View
+
+By default the panel shows only the essentials:
+
+- Organization name
+- GitHub Token
+- **Load My Assignments** button + repository list
+- **⬇ Download Latest (Pull)** and **⬆ Save to GitHub (Push)** buttons
+
+Click **Show Advanced Options** to reveal additional settings:
+
+- **Role** — Student or Teacher
+- **Repository URL** — paste a URL directly if you prefer
+- **Branch** — usually `main`
+- **Auto-Push** — choose between Auto-Push on Save (default), Manual Only, or Auto-Push on Close
+- **Commit Message** — write a custom message for your push
+
+The toggle state is saved automatically so advanced options stay visible after a restart if you have enabled them.
 
 ---
 
 ## Auto-Push
 
-Instead of manually clicking **Push**, you can configure the addon to push automatically:
+The addon defaults to **Auto-Push on Save**, which automatically pushes your work to GitHub every time you save the Godot project. No manual clicking needed.
 
-1. In the **Settings** section, find the **Auto-Push** dropdown.
-2. Choose one of:
-   - **Manual Only** (default) — push only when you click the Push button.
-   - **Auto-Push on Save** — automatically push every time you save the project. Also triggers when the editor closes.
-   - **Auto-Push on Close** — attempts to push when the editor is closed. Note: due to technical limitations, this push may not always complete if the editor shuts down before the upload finishes. For the most reliable automatic pushes, use **Auto-Push on Save**.
-3. Click **Save Settings**.
+To change the behaviour, enable **Show Advanced Options** and find the **Auto-Push** dropdown:
+
+1. **Auto-Push on Save** (default) — push every time you save the project. Also triggers when the editor closes.
+2. **Manual Only** — push only when you click **⬆ Save to GitHub (Push)**.
+3. **Auto-Push on Close** — attempts to push when the editor is closed. Note: due to technical limitations, this push may not always complete if the editor shuts down before the upload finishes. For the most reliable automatic pushes, use **Auto-Push on Save**.
+
+Click **Save Settings** after changing this option.
 
 > **Tip:** When auto-push is enabled and no commit message is entered, a default message with the current date and time is used automatically.
 
@@ -115,25 +140,24 @@ The addon supports **Teacher** and **Student** roles for browsing repositories w
 
 ### For Teachers
 
-1. Select **Teacher** from the **Role** dropdown.
+1. Enable **Show Advanced Options** and select **Teacher** from the **Role** dropdown.
 2. Enter the **Organization** name (the GitHub org used by your classroom).
 3. Enter your **GitHub Token** and click **Save Settings**.
-4. Click **Load Repos** in the **Classroom** section.
+4. Click **Load My Assignments** in the **Classroom** section.
 5. The addon verifies you are an **admin/owner** of the organization. If verified, all student repositories are loaded and organized into collapsible **assignment folders**.
    - Repositories that follow the GitHub Classroom naming convention (`{assignment}-{username}`) are automatically grouped by assignment name.
    - Expand a folder to see the individual student submissions for that assignment.
    - Repositories that don't match any shared assignment prefix appear at the top level.
-6. Click a student repository in the tree to auto-fill the **Repository URL**, then use **Pull** to download the student's project for review.
+6. Click a student repository in the tree to auto-fill the **Repository URL**, then use **⬇ Download Latest (Pull)** to download the student's project for review.
 
 ### For Students
 
-1. Select **Student** from the **Role** dropdown (this is the default).
-2. Enter the **Organization** name.
-3. Enter your **GitHub Token** and click **Save Settings**.
-4. Click **Load Repos** — only repositories containing your GitHub username are shown (matching the `{assignment}-{username}` naming convention used by GitHub Classroom).
-5. Click your repository in the list to auto-fill the **Repository URL**, then use **Pull** / **Push** as usual.
+1. Enter the **Organization** name.
+2. Enter your **GitHub Token** and click **Save Settings**.
+3. Click **Load My Assignments** — only repositories containing your GitHub username are shown (matching the `{assignment}-{username}` naming convention used by GitHub Classroom).
+4. Click your repository in the list to auto-fill the Repository URL, then use **⬇ Download Latest (Pull)** / **⬆ Save to GitHub (Push)** as usual.
 
-> **Note:** You can still enter the Repository URL manually if you prefer — the Classroom section is optional.
+> **Note:** You can still enter the Repository URL manually by enabling **Show Advanced Options** — the Classroom section is optional.
 
 ---
 
@@ -141,8 +165,8 @@ The addon supports **Teacher** and **Student** roles for browsing repositories w
 
 The addon uses the [GitHub REST API](https://docs.github.com/en/rest) (specifically the Git Data API) to transfer files between the local Godot project and the remote GitHub repository.
 
-- **Pull** downloads every file from the repository and writes it into the project folder.
-- **Push** computes a local SHA-1 hash for each project file, compares it with the remote, uploads only the files that changed, and creates a new commit.
+- **⬇ Download Latest (Pull)** downloads every file from the repository and writes it into the project folder.
+- **⬆ Save to GitHub (Push)** computes a local SHA-1 hash for each project file, compares it with the remote, uploads only the files that changed, and creates a new commit.
 
 No local Git installation is needed at all.
 
@@ -169,8 +193,8 @@ No local Git installation is needed at all.
 | **No changes to push** | Your local files already match what is on GitHub. |
 | **Push failed: X file(s) could not be uploaded** | One or more files failed to upload. Check the error messages above for details. A 403 error usually means a token permissions problem (see above). |
 | **Teacher access requires organization admin/owner privileges** | Only organization owners/admins can use the Teacher role. Ask your organization admin to grant you the owner role, or use the Student role. |
-| **No repositories found** (Load Repos) | Make sure the organization name is correct and your token has access. Students: your GitHub username must appear in the repository name. |
-| **Authentication failed** (Load Repos) | Your token could not be verified. Check that it is correct and not expired. |
+| **No repositories found** (Load My Assignments) | Make sure the organization name is correct and your token has access. Students: your GitHub username must appear in the repository name. |
+| **Authentication failed** (Load My Assignments) | Your token could not be verified. Check that it is correct and not expired. |
 
 ---
 
