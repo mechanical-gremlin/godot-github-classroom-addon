@@ -39,6 +39,11 @@ var _pull_button: Button
 var _push_button: Button
 var _status_label: RichTextLabel
 var _progress_bar: ProgressBar
+var _advanced_toggle: CheckButton
+var _connected_label: Label
+var _last_saved_label: Label
+var _advanced_nodes: Array = []
+var _pull_confirm_dialog: ConfirmationDialog
 
 # --- API node ---
 var _api: Node
@@ -57,6 +62,9 @@ func _ready() -> void:
 	_build_ui()
 	_setup_api()
 	_load_settings()
+	# First-run detection: show a welcome message if no token is configured yet.
+	if _token_input.text.strip_edges().is_empty():
+		_set_status("ℹ️ Welcome! Enter your GitHub Token and Organization above, then click Save Settings and Load My Assignments.")
 
 
 # ===========================================================================
@@ -78,40 +86,50 @@ func _build_ui() -> void:
 	# ---- Settings section ----
 	_add_section_header(vbox, "Settings")
 
-	_add_label(vbox, "Role:")
+	_advanced_toggle = CheckButton.new()
+	_advanced_toggle.text = "Show Advanced Options"
+	_advanced_toggle.tooltip_text = "Show extra settings like Role, Branch, and Repository URL."
+	_advanced_toggle.toggled.connect(_on_advanced_toggle_changed)
+	vbox.add_child(_advanced_toggle)
+
+	var role_label := _add_label(vbox, "Role:")
 	_role_option = OptionButton.new()
 	_role_option.add_item("Student", 0)
 	_role_option.add_item("Teacher", 1)
 	_role_option.tooltip_text = "Select your role. Teachers can view all student repositories in the organization."
 	_role_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vbox.add_child(_role_option)
+	_advanced_nodes.append_array([role_label, _role_option])
 
 	_add_label(vbox, "Organization:")
 	_org_input = _add_line_edit(vbox, "github-classroom-org")
-	_org_input.tooltip_text = "Your GitHub Classroom organization name. Used with Load Repos to browse assignments."
+	_org_input.tooltip_text = "Your GitHub Classroom organization name. Used with Load My Assignments to browse assignments."
 
-	_add_label(vbox, "Repository URL:")
+	var repo_url_label := _add_label(vbox, "Repository URL:")
 	_repo_url_input = _add_line_edit(vbox, "https://github.com/owner/repo")
 	_repo_url_input.tooltip_text = "Paste the repository link from GitHub Classroom here, or select one from the Classroom section below."
+	_advanced_nodes.append_array([repo_url_label, _repo_url_input])
 
 	_add_label(vbox, "GitHub Token:")
 	_token_input = _add_line_edit(vbox, "ghp_xxxxxxxxxxxx")
 	_token_input.secret = true
 	_token_input.tooltip_text = "Your GitHub Personal Access Token (starts with ghp_ or github_pat_)."
 
-	_add_label(vbox, "Branch:")
+	var branch_label := _add_label(vbox, "Branch:")
 	_branch_input = _add_line_edit(vbox, "main")
 	_branch_input.text = "main"
 	_branch_input.tooltip_text = "Usually 'main'. Only change this if your teacher tells you to."
+	_advanced_nodes.append_array([branch_label, _branch_input])
 
-	_add_label(vbox, "Auto-Push:")
+	var auto_push_label := _add_label(vbox, "Auto-Push:")
 	_auto_push_option = OptionButton.new()
-	_auto_push_option.add_item("Manual Only", AUTO_PUSH_MANUAL)
 	_auto_push_option.add_item("Auto-Push on Save", AUTO_PUSH_ON_SAVE)
+	_auto_push_option.add_item("Manual Only", AUTO_PUSH_MANUAL)
 	_auto_push_option.add_item("Auto-Push on Close", AUTO_PUSH_ON_CLOSE)
 	_auto_push_option.tooltip_text = "Automatically push changes when saving the project or closing the editor."
 	_auto_push_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vbox.add_child(_auto_push_option)
+	_advanced_nodes.append_array([auto_push_label, _auto_push_option])
 
 	_save_button = Button.new()
 	_save_button.text = "Save Settings"
@@ -124,7 +142,7 @@ func _build_ui() -> void:
 	_add_section_header(vbox, "Classroom")
 
 	_load_repos_button = Button.new()
-	_load_repos_button.text = "Load Repos"
+	_load_repos_button.text = "Load My Assignments"
 	_load_repos_button.tooltip_text = "Load repositories from your GitHub Classroom organization. Requires token and organization name."
 	_load_repos_button.pressed.connect(_on_load_repos_pressed)
 	vbox.add_child(_load_repos_button)
@@ -142,31 +160,44 @@ func _build_ui() -> void:
 	# ---- Sync section ----
 	_add_section_header(vbox, "Sync")
 
-	_add_label(vbox, "Commit Message (optional):")
+	var commit_msg_label := _add_label(vbox, "Commit Message (optional):")
 	_commit_msg_input = TextEdit.new()
 	_commit_msg_input.placeholder_text = "Optional – auto-generates if left blank."
 	_commit_msg_input.tooltip_text = "Write a short description of your changes, or leave blank for a default message with the current date and time."
 	_commit_msg_input.custom_minimum_size = Vector2(0, 60)
 	_commit_msg_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vbox.add_child(_commit_msg_input)
+	_advanced_nodes.append_array([commit_msg_label, _commit_msg_input])
+
+	_connected_label = Label.new()
+	_connected_label.text = "Not connected — load your assignments above."
+	_connected_label.add_theme_color_override("font_color", Color.GRAY)
+	_connected_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(_connected_label)
 
 	var btn_row := HBoxContainer.new()
 	btn_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vbox.add_child(btn_row)
 
 	_pull_button = Button.new()
-	_pull_button.text = "Pull"
-	_pull_button.tooltip_text = "Download the latest version of your project from GitHub."
+	_pull_button.text = "⬇ Download Latest (Pull)"
+	_pull_button.tooltip_text = "Download the latest version of your project from GitHub. (Git: Pull)"
 	_pull_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_pull_button.pressed.connect(_on_pull_pressed)
 	btn_row.add_child(_pull_button)
 
 	_push_button = Button.new()
-	_push_button.text = "Push"
-	_push_button.tooltip_text = "Upload your changes to GitHub."
+	_push_button.text = "⬆ Save to GitHub (Push)"
+	_push_button.tooltip_text = "Save your work to GitHub. (Git: Push)"
 	_push_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_push_button.pressed.connect(_on_push_pressed)
 	btn_row.add_child(_push_button)
+
+	_last_saved_label = Label.new()
+	_last_saved_label.text = ""
+	_last_saved_label.add_theme_color_override("font_color", Color.GRAY)
+	_last_saved_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(_last_saved_label)
 
 	vbox.add_child(HSeparator.new())
 
@@ -189,6 +220,18 @@ func _build_ui() -> void:
 
 	_set_status("[color=gray]Ready. Configure your settings above to get started.[/color]")
 
+	# Pull confirmation dialog.
+	_pull_confirm_dialog = ConfirmationDialog.new()
+	_pull_confirm_dialog.title = "Download Latest Version?"
+	_pull_confirm_dialog.dialog_text = "Downloading will replace your local project files with the latest version from GitHub.\n\nYour pushed work on GitHub is always safe.\n\nContinue?"
+	_pull_confirm_dialog.ok_button_text = "Yes, Download"
+	_pull_confirm_dialog.confirmed.connect(_on_pull_confirmed)
+	add_child(_pull_confirm_dialog)
+
+	# Initially hide all advanced nodes (simple mode by default).
+	for node in _advanced_nodes:
+		node.visible = false
+
 
 # Small helpers to reduce repetition when building the UI.
 
@@ -200,10 +243,11 @@ func _add_section_header(parent: VBoxContainer, text: String) -> void:
 	parent.add_child(HSeparator.new())
 
 
-func _add_label(parent: VBoxContainer, text: String) -> void:
+func _add_label(parent: VBoxContainer, text: String) -> Label:
 	var label := Label.new()
 	label.text = text
 	parent.add_child(label)
+	return label
 
 
 func _add_line_edit(parent: VBoxContainer, placeholder: String) -> LineEdit:
@@ -236,7 +280,8 @@ func _save_settings() -> void:
 	config.set_value("github", "branch", _branch_input.text)
 	config.set_value("github", "role", _role_option.selected)
 	config.set_value("github", "organization", _org_input.text)
-	config.set_value("github", "auto_push", _auto_push_option.selected)
+	config.set_value("github", "auto_push", _auto_push_option.get_selected_id())
+	config.set_value("github", "advanced_mode", _advanced_toggle.button_pressed)
 	config.save(CONFIG_PATH)
 
 
@@ -248,7 +293,19 @@ func _load_settings() -> void:
 		_branch_input.text = config.get_value("github", "branch", "main")
 		_role_option.selected = config.get_value("github", "role", 0)
 		_org_input.text = config.get_value("github", "organization", "")
-		_auto_push_option.selected = config.get_value("github", "auto_push", 0)
+		# Load auto_push by ID so reordered items work correctly.
+		# The saved integer values (0=Manual, 1=OnSave, 2=OnClose) match the
+		# AUTO_PUSH_* constants exactly, so this is also backward-compatible
+		# with config files written before the dropdown was reordered.
+		var auto_push_id: int = config.get_value("github", "auto_push", AUTO_PUSH_ON_SAVE)
+		for i in range(_auto_push_option.item_count):
+			if _auto_push_option.get_item_id(i) == auto_push_id:
+				_auto_push_option.selected = i
+				break
+		var advanced_mode: bool = config.get_value("github", "advanced_mode", false)
+		_advanced_toggle.button_pressed = advanced_mode
+		_apply_advanced_mode(advanced_mode)
+		_update_connected_label()
 
 
 # ===========================================================================
@@ -274,10 +331,10 @@ func _parse_repo_url(url: String) -> Dictionary:
 func _configure_api() -> bool:
 	var info := _parse_repo_url(_repo_url_input.text)
 	if info.is_empty():
-		_set_status("[color=red]Invalid repository URL. Use the format: https://github.com/owner/repo[/color]")
+		_set_status("❌ [color=red]Invalid repository URL. Use the format: https://github.com/owner/repo[/color]")
 		return false
 	if _token_input.text.strip_edges().is_empty():
-		_set_status("[color=red]Please enter your GitHub token.[/color]")
+		_set_status("❌ [color=red]Please enter your GitHub token.[/color]")
 		return false
 	var branch := _branch_input.text.strip_edges()
 	if branch.is_empty():
@@ -312,12 +369,17 @@ func _set_buttons_enabled(enabled: bool) -> void:
 
 func _on_save_pressed() -> void:
 	_save_settings()
-	_set_status("[color=green]Settings saved![/color]")
+	_set_status("✅ [color=green]Settings saved![/color]")
+	_update_connected_label()
 
 
 func _on_pull_pressed() -> void:
 	if not _configure_api():
 		return
+	_pull_confirm_dialog.popup_centered()
+
+
+func _on_pull_confirmed() -> void:
 	_save_settings()
 	_set_buttons_enabled(false)
 	await _do_pull()
@@ -338,11 +400,11 @@ func _on_push_pressed() -> void:
 func _on_load_repos_pressed() -> void:
 	var token := _token_input.text.strip_edges()
 	if token.is_empty():
-		_set_status("[color=red]Please enter your GitHub token.[/color]")
+		_set_status("❌ [color=red]Please enter your GitHub token.[/color]")
 		return
 	var org := _org_input.text.strip_edges()
 	if org.is_empty():
-		_set_status("[color=red]Please enter your GitHub Classroom organization name.[/color]")
+		_set_status("❌ [color=red]Please enter your GitHub Classroom organization name.[/color]")
 		return
 	# Set token for API calls (owner/repo not needed for org/user endpoints).
 	_api.setup(token, "", "", "")
@@ -359,7 +421,8 @@ func _on_repo_tree_selected() -> void:
 	if meta is int and meta >= 0 and meta < _loaded_repos.size():
 		var repo: Dictionary = _loaded_repos[meta]
 		_repo_url_input.text = "https://github.com/" + repo.owner + "/" + repo.name
-		_set_status("[color=green]Selected: " + str(repo.name) + "[/color]")
+		_set_status("✅ [color=green]Selected: " + str(repo.name) + "[/color]")
+		_update_connected_label()
 
 
 # ===========================================================================
@@ -367,25 +430,25 @@ func _on_repo_tree_selected() -> void:
 # ===========================================================================
 
 func _do_pull() -> void:
-	_set_status("[color=yellow]Pulling from GitHub...[/color]")
+	_set_status("⏳ [color=yellow]Downloading from GitHub...[/color]")
 	_progress_bar.visible = true
 	_progress_bar.value = 0
 
 	# 1 – Get branch info (latest commit + tree SHA).
-	_append_status("Getting latest version...")
+	_append_status("⏳ Getting latest version...")
 	var branch_result: Dictionary = await _api.get_branch()
 	if branch_result.has("error"):
-		_append_status("[color=red]Error: " + str(branch_result.error) + "[/color]")
+		_append_status("❌ [color=red]Error: " + str(branch_result.error) + "[/color]")
 		_progress_bar.visible = false
 		return
 
 	var tree_sha: String = branch_result.data.commit.commit.tree.sha
 
 	# 2 – Get full recursive tree.
-	_append_status("Getting file list...")
+	_append_status("⏳ Getting file list...")
 	var tree_result: Dictionary = await _api.get_git_tree(tree_sha)
 	if tree_result.has("error"):
-		_append_status("[color=red]Error: " + str(tree_result.error) + "[/color]")
+		_append_status("❌ [color=red]Error: " + str(tree_result.error) + "[/color]")
 		_progress_bar.visible = false
 		return
 
@@ -399,11 +462,11 @@ func _do_pull() -> void:
 		files.append(item)
 
 	if files.is_empty():
-		_append_status("[color=yellow]The repository has no downloadable files.[/color]")
+		_append_status("⚠️ [color=yellow]The repository has no downloadable files.[/color]")
 		_progress_bar.visible = false
 		return
 
-	_append_status("Downloading " + str(files.size()) + " files...")
+	_append_status("⏳ Downloading " + str(files.size()) + " files...")
 
 	# 3 – Download each blob and write to disk.
 	var project_path: String = ProjectSettings.globalize_path("res://")
@@ -416,7 +479,7 @@ func _do_pull() -> void:
 
 		var blob_result: Dictionary = await _api.get_blob(file_info.sha)
 		if blob_result.has("error"):
-			_append_status("[color=red]  Failed: " + file_info.path + " – " + str(blob_result.error) + "[/color]")
+			_append_status("❌ [color=red]  Failed: " + file_info.path + " – " + str(blob_result.error) + "[/color]")
 			errors += 1
 			continue
 
@@ -431,14 +494,14 @@ func _do_pull() -> void:
 			file.close()
 			downloaded += 1
 		else:
-			_append_status("[color=red]  Could not write: " + file_info.path + "[/color]")
+			_append_status("❌ [color=red]  Could not write: " + file_info.path + "[/color]")
 			errors += 1
 
 	_progress_bar.visible = false
 	if errors == 0:
-		_append_status("[color=green]Pull complete! Downloaded " + str(downloaded) + " files.[/color]")
+		_append_status("✅ [color=green]Download complete! Downloaded " + str(downloaded) + " files.[/color]")
 	else:
-		_append_status("[color=yellow]Pull finished with " + str(errors) + " error(s). Downloaded " + str(downloaded) + " files.[/color]")
+		_append_status("⚠️ [color=yellow]Download finished with " + str(errors) + " error(s). Downloaded " + str(downloaded) + " files.[/color]")
 
 	# Refresh the Godot editor so it sees the new/changed files.
 	if Engine.is_editor_hint():
@@ -457,12 +520,12 @@ func _do_push() -> void:
 			dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second
 		]
 
-	_set_status("[color=yellow]Pushing to GitHub...[/color]")
+	_set_status("⏳ [color=yellow]Saving to GitHub...[/color]")
 	_progress_bar.visible = true
 	_progress_bar.value = 0
 
 	# 1 – Get branch HEAD. A 404 means the repo/branch has no commits yet.
-	_append_status("Getting current version...")
+	_append_status("⏳ Getting current version...")
 	var branch_result: Dictionary = await _api.get_branch()
 	var is_first_commit := false
 	var head_sha := ""
@@ -471,9 +534,9 @@ func _do_push() -> void:
 	if branch_result.has("error"):
 		if "404" in str(branch_result.error):
 			is_first_commit = true
-			_append_status("No existing commits found – this will be the first commit.")
+			_append_status("ℹ️ No existing commits found – this will be the first commit.")
 		else:
-			_append_status("[color=red]Error: " + str(branch_result.error) + "[/color]")
+			_append_status("❌ [color=red]Error: " + str(branch_result.error) + "[/color]")
 			_progress_bar.visible = false
 			return
 	else:
@@ -483,7 +546,7 @@ func _do_push() -> void:
 	# 2 – Build a map of remote file SHAs for comparison.
 	var remote_files: Dictionary = {}
 	if not base_tree_sha.is_empty():
-		_append_status("Comparing files...")
+		_append_status("⏳ Comparing files...")
 		var remote_tree_result: Dictionary = await _api.get_git_tree(base_tree_sha)
 		if not remote_tree_result.has("error"):
 			for item in remote_tree_result.data.tree:
@@ -495,12 +558,12 @@ func _do_push() -> void:
 	var local_files: Array = _scan_project_files(project_path, "")
 
 	if local_files.is_empty():
-		_append_status("[color=yellow]No files found to push.[/color]")
+		_append_status("⚠️ [color=yellow]No files found to push.[/color]")
 		_progress_bar.visible = false
 		return
 
 	# 4 – Compare each local file, upload blobs only for changed/new files.
-	_append_status("Checking " + str(local_files.size()) + " files for changes...")
+	_append_status("⏳ Checking " + str(local_files.size()) + " files for changes...")
 	var tree_entries: Array = []
 	var changed_count: int = 0
 	var upload_errors: int = 0
@@ -513,7 +576,7 @@ func _do_push() -> void:
 		var full_path: String = project_path.path_join(rel_path)
 		var content: PackedByteArray = FileAccess.get_file_as_bytes(full_path)
 		if content.is_empty() and FileAccess.get_open_error() != OK:
-			_append_status("[color=red]  Could not read: " + rel_path + "[/color]")
+			_append_status("❌ [color=red]  Could not read: " + rel_path + "[/color]")
 			continue
 
 		var local_sha: String = _compute_git_blob_sha(content)
@@ -526,7 +589,7 @@ func _do_push() -> void:
 			var blob_result: Dictionary = await _api.create_blob(content)
 			if blob_result.has("error"):
 				var err_msg: String = str(blob_result.error)
-				_append_status("[color=red]  Upload failed: " + rel_path + " – " + err_msg + "[/color]")
+				_append_status("❌ [color=red]  Upload failed: " + rel_path + " – " + err_msg + "[/color]")
 				if "403" in err_msg:
 					had_permission_error = true
 				upload_errors += 1
@@ -535,41 +598,41 @@ func _do_push() -> void:
 			changed_count += 1
 
 	if upload_errors > 0:
-		_append_status("[color=red]Push failed: " + str(upload_errors) + " file(s) could not be uploaded.[/color]")
+		_append_status("❌ [color=red]Push failed: " + str(upload_errors) + " file(s) could not be uploaded.[/color]")
 		if had_permission_error:
 			_append_status(TOKEN_PERMISSION_HINT)
 		_progress_bar.visible = false
 		return
 
 	if changed_count == 0 and not is_first_commit:
-		_append_status("[color=green]No changes to push. Everything is up to date![/color]")
+		_append_status("✅ [color=green]No changes to push. Everything is up to date![/color]")
 		_progress_bar.visible = false
 		return
 
-	_append_status("Creating commit with " + str(changed_count) + " changed file(s)...")
+	_append_status("⏳ Creating commit with " + str(changed_count) + " changed file(s)...")
 	_progress_bar.value = 70.0
 
 	# 5 – Create a brand-new tree (no base_tree so deletions are captured).
 	var tree_result: Dictionary = await _api.create_tree(tree_entries)
 	if tree_result.has("error"):
-		_append_status("[color=red]Error creating file tree: " + str(tree_result.error) + "[/color]")
+		_append_status("❌ [color=red]Error creating file tree: " + str(tree_result.error) + "[/color]")
 		_progress_bar.visible = false
 		return
 
 	_progress_bar.value = 85.0
 
 	# 6 – Create the commit.
-	_append_status("Saving commit...")
+	_append_status("⏳ Saving commit...")
 	var commit_result: Dictionary = await _api.create_commit(tree_result.data.sha, head_sha, message)
 	if commit_result.has("error"):
-		_append_status("[color=red]Error creating commit: " + str(commit_result.error) + "[/color]")
+		_append_status("❌ [color=red]Error creating commit: " + str(commit_result.error) + "[/color]")
 		_progress_bar.visible = false
 		return
 
 	_progress_bar.value = 95.0
 
 	# 7 – Point the branch at the new commit.
-	_append_status("Updating branch...")
+	_append_status("⏳ Updating branch...")
 	var ref_result: Dictionary
 	if is_first_commit:
 		ref_result = await _api.create_ref(commit_result.data.sha)
@@ -577,15 +640,16 @@ func _do_push() -> void:
 		ref_result = await _api.update_ref(commit_result.data.sha)
 
 	if ref_result.has("error"):
-		_append_status("[color=red]Error updating branch: " + str(ref_result.error) + "[/color]")
+		_append_status("❌ [color=red]Error updating branch: " + str(ref_result.error) + "[/color]")
 		_progress_bar.visible = false
 		return
 
 	_progress_bar.value = 100.0
 	_progress_bar.visible = false
 
-	_append_status("[color=green]Push complete! " + str(changed_count) + " file(s) updated.[/color]")
+	_append_status("✅ [color=green]Saved to GitHub! " + str(changed_count) + " file(s) updated.[/color]")
 	_commit_msg_input.text = ""
+	_update_last_saved_label()
 
 
 # ===========================================================================
@@ -593,17 +657,17 @@ func _do_push() -> void:
 # ===========================================================================
 
 func _do_load_repos(org: String) -> void:
-	_set_status("[color=yellow]Loading repositories...[/color]")
+	_set_status("⏳ [color=yellow]Loading assignments...[/color]")
 	_repo_tree.clear()
 	_loaded_repos.clear()
 
 	# 1 – Verify token and get username.
 	var user_result: Dictionary = await _api.get_authenticated_user()
 	if user_result.has("error"):
-		_set_status("[color=red]Authentication failed: " + str(user_result.error) + "[/color]")
+		_set_status("❌ [color=red]Authentication failed: " + str(user_result.error) + "[/color]")
 		return
 	_github_username = str(user_result.data.login)
-	_append_status("Signed in as @" + _github_username)
+	_append_status("ℹ️ Signed in as @" + _github_username)
 
 	var is_teacher := (_role_option.selected == 1)
 
@@ -611,21 +675,21 @@ func _do_load_repos(org: String) -> void:
 		# 2a – Verify the user is an org admin (teacher).
 		var membership_result: Dictionary = await _api.get_org_membership(org, _github_username)
 		if membership_result.has("error"):
-			_set_status("[color=red]Could not verify organization membership: " + str(membership_result.error) + "[/color]")
-			_append_status("[color=yellow]Teacher access requires organization admin/owner privileges.[/color]")
+			_set_status("❌ [color=red]Could not verify organization membership: " + str(membership_result.error) + "[/color]")
+			_append_status("⚠️ [color=yellow]Teacher access requires organization admin/owner privileges.[/color]")
 			return
 		var role_str: String = str(membership_result.data.get("role", ""))
 		if role_str != "admin":
-			_set_status("[color=red]Teacher access requires organization admin/owner privileges. Your role is '" + role_str + "'.[/color]")
+			_set_status("❌ [color=red]Teacher access requires organization admin/owner privileges. Your role is '" + role_str + "'.[/color]")
 			return
-		_append_status("Verified as organization admin.")
+		_append_status("✅ Verified as organization admin.")
 
 		# 3a – Load all org repos (paginated).
 		var page := 1
 		while true:
 			var repos_result: Dictionary = await _api.get_org_repos(org, page)
 			if repos_result.has("error"):
-				_append_status("[color=red]Error loading repos: " + str(repos_result.error) + "[/color]")
+				_append_status("❌ [color=red]Error loading repos: " + str(repos_result.error) + "[/color]")
 				break
 			if not (repos_result.data is Array) or repos_result.data.is_empty():
 				break
@@ -648,7 +712,7 @@ func _do_load_repos(org: String) -> void:
 		while true:
 			var repos_result: Dictionary = await _api.get_user_repos(page)
 			if repos_result.has("error"):
-				_append_status("[color=red]Error loading repos: " + str(repos_result.error) + "[/color]")
+				_append_status("❌ [color=red]Error loading repos: " + str(repos_result.error) + "[/color]")
 				break
 			if not (repos_result.data is Array) or repos_result.data.is_empty():
 				break
@@ -668,9 +732,9 @@ func _do_load_repos(org: String) -> void:
 		_populate_student_tree()
 
 	if _loaded_repos.is_empty():
-		_append_status("[color=yellow]No repositories found.[/color]")
+		_append_status("⚠️ [color=yellow]No repositories found.[/color]")
 	else:
-		_append_status("[color=green]Found " + str(_loaded_repos.size()) + " repositories.[/color]")
+		_append_status("✅ [color=green]Found " + str(_loaded_repos.size()) + " repositories.[/color]")
 
 
 ## Build a grouped tree view for teachers.  Repos following the GitHub
@@ -749,13 +813,13 @@ func _populate_student_tree() -> void:
 
 ## Called by the plugin when the editor saves external data (project save).
 func _on_editor_save() -> void:
-	if _auto_push_option.selected == AUTO_PUSH_ON_SAVE and not _is_pushing:
+	if _auto_push_option.get_selected_id() == AUTO_PUSH_ON_SAVE and not _is_pushing:
 		_trigger_auto_push()
 
 
 ## Called by the plugin when the editor is about to close.
 func _on_editor_close() -> void:
-	if _auto_push_option.selected == AUTO_PUSH_ON_CLOSE and not _is_pushing:
+	if _auto_push_option.get_selected_id() == AUTO_PUSH_ON_CLOSE and not _is_pushing:
 		_trigger_auto_push()
 
 
@@ -824,3 +888,59 @@ func _compute_git_blob_sha(content: PackedByteArray) -> String:
 	ctx.update(header)
 	ctx.update(content)
 	return ctx.finish().hex_encode()
+
+
+# ===========================================================================
+# Advanced mode toggle
+# ===========================================================================
+
+func _on_advanced_toggle_changed(pressed: bool) -> void:
+	_apply_advanced_mode(pressed)
+	# Persist the toggle state immediately so it survives a restart.
+	var config := ConfigFile.new()
+	config.load(CONFIG_PATH)
+	config.set_value("github", "advanced_mode", pressed)
+	config.save(CONFIG_PATH)
+
+
+func _apply_advanced_mode(advanced: bool) -> void:
+	for node in _advanced_nodes:
+		node.visible = advanced
+
+
+# ===========================================================================
+# Connected label + last-saved label helpers
+# ===========================================================================
+
+## Update the persistent "Connected" label based on the current URL + branch.
+func _update_connected_label() -> void:
+	var url := _repo_url_input.text.strip_edges()
+	if url.is_empty():
+		_connected_label.text = "Not connected — load your assignments above."
+		_connected_label.add_theme_color_override("font_color", Color.GRAY)
+		return
+	var info := _parse_repo_url(url)
+	if info.is_empty():
+		_connected_label.text = "Not connected — load your assignments above."
+		_connected_label.add_theme_color_override("font_color", Color.GRAY)
+	else:
+		var branch := _branch_input.text.strip_edges()
+		if branch.is_empty():
+			branch = "main"
+		_connected_label.text = "🟢 Connected: " + str(info.repo) + " on " + branch
+		_connected_label.remove_theme_color_override("font_color")
+
+
+## Update the "Last saved to GitHub" label with the current time.
+func _update_last_saved_label() -> void:
+	var dt := Time.get_datetime_dict_from_system()
+	var hour: int = dt.hour
+	var minute: int = dt.minute
+	var am_pm := "AM"
+	if hour >= 12:
+		am_pm = "PM"
+	if hour > 12:
+		hour -= 12
+	elif hour == 0:
+		hour = 12
+	_last_saved_label.text = "Last saved to GitHub: Today at %d:%02d %s" % [hour, minute, am_pm]
