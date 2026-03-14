@@ -7,7 +7,7 @@ var dock: Control
 func _enter_tree() -> void:
 	var DockScript = preload("res://addons/github_classroom/github_classroom_dock.gd")
 	dock = DockScript.new()
-	dock.name = "GitHubClassroom"
+	dock.name = "GitHub Classroom"
 	add_control_to_dock(DOCK_SLOT_RIGHT_UL, dock)
 
 
