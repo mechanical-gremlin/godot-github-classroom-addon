@@ -5,7 +5,7 @@ extends Control
 ## Provides a simple UI so students can pull and push their Godot projects
 ## to a GitHub Classroom repository without ever touching the command line.
 
-const CONFIG_PATH := "user://github_classroom_config.cfg"
+# CONFIG_PATH is now per-OS-user; see _get_config_path() below.
 
 # Directories to skip when scanning/downloading project files.
 const EXCLUDED_DIRS := [".godot", ".git"]
@@ -32,6 +32,7 @@ var _token_input: LineEdit
 var _branch_input: LineEdit
 var _auto_push_option: OptionButton
 var _save_button: Button
+var _sign_out_button: Button
 var _load_repos_button: Button
 var _repo_tree: Tree
 var _commit_msg_input: TextEdit
@@ -62,6 +63,8 @@ func _ready() -> void:
 	_build_ui()
 	_setup_api()
 	_load_settings()
+	# Connect token-change signal after loading so it does not fire during init.
+	_token_input.text_changed.connect(_on_token_changed)
 	# First-run detection: show a welcome message if no token is configured yet.
 	if _token_input.text.strip_edges().is_empty():
 		_set_status("ℹ️ Welcome! Enter your GitHub Token and Organization above, then click Save Settings and Load My Assignments.")
@@ -135,6 +138,12 @@ func _build_ui() -> void:
 	_save_button.text = "Save Settings"
 	_save_button.pressed.connect(_on_save_pressed)
 	vbox.add_child(_save_button)
+
+	_sign_out_button = Button.new()
+	_sign_out_button.text = "🔒 Sign Out / Clear Credentials"
+	_sign_out_button.tooltip_text = "Clear your token and repository URL before logging out of this computer."
+	_sign_out_button.pressed.connect(_on_sign_out_pressed)
+	vbox.add_child(_sign_out_button)
 
 	vbox.add_child(HSeparator.new())
 
@@ -270,26 +279,102 @@ func _setup_api() -> void:
 
 
 # ===========================================================================
+# Per-OS-user config path helpers
+# ===========================================================================
+
+## Return the raw OS-level desktop username (empty string if unavailable).
+func _get_os_username() -> String:
+	var os_user := OS.get_environment("USERNAME")  # Windows
+	if os_user.is_empty():
+		os_user = OS.get_environment("USER")       # macOS / Linux
+	return os_user
+
+
+## Return a config-file path unique to the current OS-level desktop user.
+## This prevents Student A's token from loading when Student B logs in.
+func _get_config_path() -> String:
+	var os_user := _get_os_username()
+	if os_user.is_empty():
+		os_user = "default"
+	# Sanitize: keep only alphanumeric and underscore characters.
+	var safe_user := ""
+	for ch in os_user:
+		if (ch >= "0" and ch <= "9") or \
+		   (ch >= "A" and ch <= "Z") or \
+		   (ch >= "a" and ch <= "z") or \
+		   ch == "_":
+			safe_user += ch
+		else:
+			safe_user += "_"
+	if safe_user.is_empty():
+		safe_user = "default"
+	return "user://github_classroom_" + safe_user + ".cfg"
+
+
+# ===========================================================================
+# Token obfuscation helpers (XOR keyed to the OS username)
+# ===========================================================================
+
+## XOR-obfuscate a token string so it is not stored as visible plaintext.
+## This is defense-in-depth, not true encryption.
+## Each byte is XOR'd with the key, and the result is encoded as lowercase hex pairs.
+func _obfuscate_token(token: String) -> String:
+	var key := _get_os_username()
+	if key.is_empty():
+		key = "godot_classroom_key"
+	var result := ""
+	for i in range(token.length()):
+		var t_byte := token.unicode_at(i)
+		var k_byte := key.unicode_at(i % key.length())
+		result += "%02x" % (t_byte ^ k_byte)
+	return result
+
+
+## Reverse _obfuscate_token(). Expects lowercase hex pairs produced by _obfuscate_token().
+func _deobfuscate_token(obfuscated: String) -> String:
+	var key := _get_os_username()
+	if key.is_empty():
+		key = "godot_classroom_key"
+	var result := ""
+	for i in range(0, obfuscated.length(), 2):
+		var hex_pair := obfuscated.substr(i, 2)
+		var t_byte := hex_pair.hex_to_int()
+		var key_idx := (i / 2) % key.length()
+		var k_byte := key.unicode_at(key_idx)
+		result += char(t_byte ^ k_byte)
+	return result
+
+
+# ===========================================================================
 # Settings persistence
 # ===========================================================================
 
 func _save_settings() -> void:
 	var config := ConfigFile.new()
 	config.set_value("github", "repo_url", _repo_url_input.text)
-	config.set_value("github", "token", _token_input.text)
+	config.set_value("github", "token_v2", _obfuscate_token(_token_input.text))
 	config.set_value("github", "branch", _branch_input.text)
 	config.set_value("github", "role", _role_option.selected)
 	config.set_value("github", "organization", _org_input.text)
 	config.set_value("github", "auto_push", _auto_push_option.get_selected_id())
 	config.set_value("github", "advanced_mode", _advanced_toggle.button_pressed)
-	config.save(CONFIG_PATH)
+	config.save(_get_config_path())
 
 
 func _load_settings() -> void:
 	var config := ConfigFile.new()
-	if config.load(CONFIG_PATH) == OK:
+	if config.load(_get_config_path()) == OK:
 		_repo_url_input.text = config.get_value("github", "repo_url", "")
-		_token_input.text = config.get_value("github", "token", "")
+		# Load token: prefer obfuscated token_v2; migrate plaintext token if present.
+		if config.has_section_key("github", "token_v2"):
+			_token_input.text = _deobfuscate_token(config.get_value("github", "token_v2", ""))
+		elif config.has_section_key("github", "token"):
+			# Migrate old plaintext token to obfuscated format.
+			var plain := config.get_value("github", "token", "")
+			_token_input.text = plain
+			config.set_value("github", "token_v2", _obfuscate_token(plain))
+			config.erase_section_key("github", "token")
+			config.save(_get_config_path())
 		_branch_input.text = config.get_value("github", "branch", "main")
 		_role_option.selected = config.get_value("github", "role", 0)
 		_org_input.text = config.get_value("github", "organization", "")
@@ -313,12 +398,13 @@ func _load_settings() -> void:
 # ===========================================================================
 
 ## Parse a GitHub URL into {"owner": ..., "repo": ...}. Returns {} on failure.
+## This is a pure parsing function — it does not update the status label.
 func _parse_repo_url(url: String) -> Dictionary:
 	url = url.strip_edges().trim_suffix(".git").trim_suffix("/")
 	if url.begins_with("https://"):
 		url = url.substr(8)
 	elif url.begins_with("http://"):
-		url = url.substr(7)
+		return {}
 	if url.begins_with("github.com/"):
 		url = url.substr(11)
 	var parts := url.split("/")
@@ -329,7 +415,12 @@ func _parse_repo_url(url: String) -> Dictionary:
 
 ## Validate inputs and configure the API node. Returns true on success.
 func _configure_api() -> bool:
-	var info := _parse_repo_url(_repo_url_input.text)
+	var raw_url := _repo_url_input.text.strip_edges()
+	# Reject insecure http:// URLs with a clear message before any parsing.
+	if raw_url.begins_with("http://"):
+		_set_status("❌ [color=red]Insecure URL (http://) is not allowed. Use https://github.com/owner/repo.[/color]")
+		return false
+	var info := _parse_repo_url(raw_url)
 	if info.is_empty():
 		_set_status("❌ [color=red]Invalid repository URL. Use the format: https://github.com/owner/repo[/color]")
 		return false
@@ -360,6 +451,7 @@ func _set_buttons_enabled(enabled: bool) -> void:
 	_pull_button.disabled = not enabled
 	_push_button.disabled = not enabled
 	_save_button.disabled = not enabled
+	_sign_out_button.disabled = not enabled
 	_load_repos_button.disabled = not enabled
 
 
@@ -380,7 +472,6 @@ func _on_pull_pressed() -> void:
 
 
 func _on_pull_confirmed() -> void:
-	_save_settings()
 	_set_buttons_enabled(false)
 	await _do_pull()
 	_set_buttons_enabled(true)
@@ -423,6 +514,32 @@ func _on_repo_tree_selected() -> void:
 		_repo_url_input.text = "https://github.com/" + repo.owner + "/" + repo.name
 		_set_status("✅ [color=green]Selected: " + str(repo.name) + "[/color]")
 		_update_connected_label()
+
+
+## Clear repo list, repo URL, and username whenever the token is manually edited.
+## This prevents a previous student's data from remaining visible after a logout.
+## The _new_text parameter is intentionally unused — we act on the change event
+## itself, not the value (callers can inspect _token_input.text directly).
+func _on_token_changed(_new_text: String) -> void:
+	_loaded_repos.clear()
+	_repo_tree.clear()
+	_repo_url_input.text = ""
+	_github_username = ""
+	_update_connected_label()
+
+
+## Sign out: wipe all credentials from the UI and persist the cleared state.
+func _on_sign_out_pressed() -> void:
+	_token_input.text = ""
+	_org_input.text = ""
+	_repo_url_input.text = ""
+	_role_option.selected = 0
+	_loaded_repos.clear()
+	_repo_tree.clear()
+	_github_username = ""
+	_save_settings()
+	_set_status("🔒 Signed out. Enter your GitHub Token to get started.")
+	_update_connected_label()
 
 
 # ===========================================================================
@@ -672,17 +789,28 @@ func _do_load_repos(org: String) -> void:
 	var is_teacher := (_role_option.selected == 1)
 
 	if is_teacher:
-		# 2a – Verify the user is an org admin (teacher).
+		# 2a – Verify the user is an org admin/owner (teacher).
 		var membership_result: Dictionary = await _api.get_org_membership(org, _github_username)
 		if membership_result.has("error"):
 			_set_status("❌ [color=red]Could not verify organization membership: " + str(membership_result.error) + "[/color]")
 			_append_status("⚠️ [color=yellow]Teacher access requires organization admin/owner privileges.[/color]")
+			_append_status("ℹ️ Switching you back to the Student role.")
+			# Reset to Student role and persist so state is never left in an
+			# unverified Teacher role.
+			_role_option.selected = 0
+			_save_settings()
 			return
 		var role_str: String = str(membership_result.data.get("role", ""))
+		# GitHub's org membership API returns "admin" for both owners and admins;
+		# there is no separate "owner" string in this response.
 		if role_str != "admin":
 			_set_status("❌ [color=red]Teacher access requires organization admin/owner privileges. Your role is '" + role_str + "'.[/color]")
+			_append_status("ℹ️ Switching you back to the Student role.")
+			# Reset to Student role and persist.
+			_role_option.selected = 0
+			_save_settings()
 			return
-		_append_status("✅ Verified as organization admin.")
+		_append_status("✅ Verified as organization admin/owner.")
 
 		# 3a – Load all org repos (paginated).
 		var page := 1
@@ -898,9 +1026,9 @@ func _on_advanced_toggle_changed(pressed: bool) -> void:
 	_apply_advanced_mode(pressed)
 	# Persist the toggle state immediately so it survives a restart.
 	var config := ConfigFile.new()
-	config.load(CONFIG_PATH)
+	config.load(_get_config_path())
 	config.set_value("github", "advanced_mode", pressed)
-	config.save(CONFIG_PATH)
+	config.save(_get_config_path())
 
 
 func _apply_advanced_mode(advanced: bool) -> void:
