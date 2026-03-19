@@ -15,11 +15,13 @@ Everything happens through a small panel inside the Godot editor, making it idea
 | **Auto-Push on Save (default)** | Automatically pushes every time you save the project — no manual push needed. |
 | **Default Commit Message** | Commit message is optional — a timestamped default is generated when left blank. |
 | **Simple / Advanced View** | A toggle hides advanced options by default so beginners only see what they need. |
-| **Teacher / Student Roles** | Teachers can browse all student repos in an organization; students see only their own. |
+| **Teacher / Student Roles** | Teachers can browse all student repos in an organization; students see only their own. Teacher access requires verified organization admin/owner status. |
 | **Classroom Repo Browser** | Load and select repositories from a GitHub Classroom organization. Click **Load My Assignments** to browse. |
 | **No Git required** | Uses the GitHub REST API directly — Git does not need to be installed. |
 | **Simple UI** | One panel with only the controls students need. |
-| **Secure** | The GitHub token is stored locally outside the project folder and is never committed. |
+| **🔒 Sign Out button** | Clears your token and settings with one click — use it before logging out of a shared computer. |
+| **Per-user settings** | Settings are stored separately for each OS desktop account, so Student B's Godot session never loads Student A's token. |
+| **Token obfuscation** | The GitHub token is stored with XOR obfuscation (defense-in-depth, not encryption) — not plain text. |
 
 ---
 
@@ -44,6 +46,8 @@ Everything happens through a small panel inside the Godot editor, making it idea
 7. Click your repository in the list, then click **⬇ Download Latest (Pull)** to download the starter code.
 
 > **Tip:** The addon defaults to **Auto-Push on Save** — your work is automatically saved to GitHub every time you save your Godot project. You don't need to click Push manually!
+
+> **Shared computers:** When you are done, click the **🔒 Sign Out / Clear Credentials** button in the panel before logging out of the desktop. This ensures the next person who opens the project cannot access your GitHub account.
 
 ---
 
@@ -89,7 +93,7 @@ Fine-grained tokens offer narrower permissions but may require extra setup for o
    > A confirmation dialog will appear — click **Yes, Download** to proceed.
 2. **Work on your project** — Add scenes, write scripts, create art, etc.
 3. **Save as you go** — Because **Auto-Push on Save** is the default, your project is automatically saved to GitHub each time you press Ctrl+S (or use File → Save). You'll see a "Last saved to GitHub: Today at ..." message appear below the buttons.
-4. **End of class** — No extra steps needed! Your work is already safely stored on GitHub.
+4. **End of class** — Click **🔒 Sign Out / Clear Credentials** before logging out of the shared desktop computer. This removes your token from the panel so the next student cannot access your work.
 
 > **Optional:** If you want to add a meaningful commit message, type it in the **Commit Message** box (visible in Advanced Options) and click **⬆ Save to GitHub (Push)** manually.
 
@@ -101,6 +105,7 @@ By default the panel shows only the essentials:
 
 - Organization name
 - GitHub Token
+- **🔒 Sign Out / Clear Credentials** button
 - **Load My Assignments** button + repository list
 - **⬇ Download Latest (Pull)** and **⬆ Save to GitHub (Push)** buttons
 
@@ -180,6 +185,21 @@ No local Git installation is needed at all.
 
 ---
 
+## Security — Shared Lab Computers
+
+The addon is designed to be safe on shared desktop machines (computer labs) where multiple students log in to the same OS account or where different OS accounts share a common Godot installation.
+
+| Protection | How it works |
+|------------|--------------|
+| **Per-OS-user config file** | Settings are stored in a file whose name includes the OS desktop username (e.g. `github_classroom_jsmith.cfg`). Student B's Godot session will never load Student A's token. |
+| **Token obfuscation** | The GitHub Personal Access Token is not written to disk as plain text. A per-user XOR key is applied before saving. This is defense-in-depth (not cryptographic encryption) — it prevents casual snooping but is not a substitute for proper filesystem permissions on the machine. |
+| **Sign Out button** | The **🔒 Sign Out / Clear Credentials** button (always visible) wipes the token, organization, and repository URL from both the panel and the config file in one click. **Always click Sign Out before logging out of the shared computer.** |
+| **Teacher role verification** | Selecting the Teacher role always triggers a live GitHub API check. If your account is not an organization admin/owner, the addon immediately resets you to the Student role and saves that state — so you cannot be left in an unverified Teacher role. |
+| **Repo list cleared on token change** | If you clear or change the token field, the repository list and repository URL are immediately cleared so a previous student's repo names are no longer visible. |
+| **HTTPS only** | The addon rejects any `http://` repository URL with a clear error. All traffic goes over HTTPS. |
+
+---
+
 ## Troubleshooting
 
 | Message | What to Do |
@@ -192,7 +212,7 @@ No local Git installation is needed at all.
 | **Connection failed** | Check your internet connection and try again. |
 | **No changes to push** | Your local files already match what is on GitHub. |
 | **Push failed: X file(s) could not be uploaded** | One or more files failed to upload. Check the error messages above for details. A 403 error usually means a token permissions problem (see above). |
-| **Teacher access requires organization admin/owner privileges** | Only organization owners/admins can use the Teacher role. Ask your organization admin to grant you the owner role, or use the Student role. |
+| **Teacher access requires organization admin/owner privileges** | Only organization owners/admins can use the Teacher role. The addon automatically resets you to the Student role. Ask your organization admin to grant you the owner role, or use the Student role. |
 | **No repositories found** (Load My Assignments) | Make sure the organization name is correct and your token has access. Students: your GitHub username must appear in the repository name. |
 | **Authentication failed** (Load My Assignments) | Your token could not be verified. Check that it is correct and not expired. |
 
