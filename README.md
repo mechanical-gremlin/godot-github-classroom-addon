@@ -221,9 +221,35 @@ The addon is designed to be safe on shared desktop machines (computer labs) wher
 
 ## TLS and Certificate Security
 
-The addon bundles GitHub's CA certificate chain (DigiCert Global Root G2 and the DigiCert TLS RSA SHA256 2020 CA1 intermediate) at `addons/github_classroom/certs/github-ca.crt`. This certificate is loaded at startup and used for all HTTPS connections to `api.github.com`, so Godot does not need to rely on its own system CA store.
+The addon bundles two DigiCert root CA certificates at `addons/github_classroom/certs/github-ca.crt`:
 
-This means **full TLS certificate validation is always active** — connections to `api.github.com` are verified against the bundled certificate, protecting student tokens and data from interception. The connection is rejected if the certificate doesn't match.
+| Certificate | Valid until |
+|---|---|
+| **DigiCert Global Root CA** | Nov 10 00:00:00 2031 GMT |
+| **DigiCert Global Root G2** | Jan 15 12:00:00 2038 GMT |
+
+Both roots are included because GitHub rotates between them. Both certificates are self-signed root CAs extracted from the standard system CA bundle and verified against their DER byte-length fields.
+
+These certificates are loaded at startup via `X509Certificate.load()` and passed to `TLSOptions.client()`. Every HTTPS request to `api.github.com` is verified against this bundled chain, so the addon does not depend on Godot's built-in system CA store (which is absent on some Godot 4.x builds).
+
+**Full TLS certificate chain validation is always active** — `TLSOptions.client_unsafe()` is never used. A connection to `api.github.com` is rejected if its certificate cannot be verified against the bundled roots, protecting student GitHub Personal Access Tokens from interception.
+
+### What this protects against
+
+| Threat | Status |
+|---|---|
+| Passive eavesdropping (tokens / code in transit) | ✅ Blocked — TLS encrypts all traffic |
+| Man-in-the-middle with a self-signed cert | ✅ Blocked — chain validation rejects it |
+| Man-in-the-middle with a DigiCert-signed cert | ✅ Blocked — only GitHub's legitimate cert passes |
+| `http://` repository URLs (unencrypted) | ✅ Blocked — rejected before any API call |
+| Another student's token visible after sign-out | ✅ Blocked — config is per OS user; Sign Out clears the token field |
+
+### What this does not protect against
+
+| Threat | Notes |
+|---|---|
+| Token stored on disk | Tokens are XOR-obfuscated (not encrypted) in `user://github_classroom_<username>.cfg`. Physical access to the machine with knowledge of the OS username allows recovery. For shared lab machines, enabling full-disk encryption (e.g. BitLocker, FileVault) is the most effective mitigation. True secret-manager integration (OS keychain) is not natively available in GDScript and would require a GDExtension. |
+| Godot's system CA store being compromised | If the Godot installation itself is tampered with, all bets are off. |
 
 If you see a TLS error such as **"Connection failed (result 5)"**, ensure you are running **Godot 4.2 or later**. Earlier versions have unreliable TLS support.
 
@@ -239,7 +265,7 @@ addons/
     ├── github_api.gd               # GitHub REST API wrapper
     ├── github_classroom_dock.gd    # Dock panel UI + pull/push logic
     └── certs/
-        └── github-ca.crt          # Bundled DigiCert CA cert for api.github.com
+        └── github-ca.crt          # Bundled DigiCert root CAs for api.github.com
 ```
 
 ---
