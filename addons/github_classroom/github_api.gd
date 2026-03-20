@@ -7,11 +7,27 @@ extends Node
 ## the Git Data API (blobs, trees, commits, refs).
 
 const BASE_URL := "https://api.github.com"
+const _CERT_PATH := "res://addons/github_classroom/certs/github-ca.crt"
 
 var _token: String = ""
 var _owner: String = ""
 var _repo: String = ""
 var _branch: String = "main"
+var _tls_options: TLSOptions = null
+
+
+func _ready() -> void:
+	_setup_tls()
+
+
+func _setup_tls() -> void:
+	var cert := X509Certificate.new()
+	var err := cert.load(_CERT_PATH)
+	if err == OK:
+		_tls_options = TLSOptions.client(cert)
+	else:
+		push_warning("GodotGitHubClassroom: Could not load bundled CA cert from %s (error %d). TLS validation may fail." % [_CERT_PATH, err])
+		_tls_options = null
 
 
 func setup(token: String, owner: String, repo: String, branch: String = "main") -> void:
@@ -28,6 +44,8 @@ func setup(token: String, owner: String, repo: String, branch: String = "main") 
 func _make_request(method: HTTPClient.Method, endpoint: String, body: Variant = null) -> Dictionary:
 	var http := HTTPRequest.new()
 	add_child(http)
+	if _tls_options != null:
+		http.set_tls_options(_tls_options)
 
 	var url := BASE_URL + endpoint
 	var headers := PackedStringArray([

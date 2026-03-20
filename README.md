@@ -209,12 +209,23 @@ The addon is designed to be safe on shared desktop machines (computer labs) wher
 | **HTTP 403: Resource not accessible by personal access token** | Your token does not have write permission. This is common with **fine-grained tokens** and organization (GitHub Classroom) repositories. **Fix:** Create a **classic token** with the `repo` scope instead (see *Creating a GitHub Personal Access Token — Option A* above). If you prefer fine-grained tokens, make sure the organization allows them and that the **Resource owner** is the organization, not your personal account. |
 | **HTTP 403: …** (other messages) | Your token does not have the required permissions. Make sure **Contents → Read and write** is enabled (fine-grained) or the **repo** scope is checked (classic). |
 | **HTTP 404: Not Found** | Double-check the repository URL and make sure your token has access to that repository. |
+| **Connection failed (result 5)** | This is a TLS/SSL handshake error. Ensure you are running Godot 4.2 or later. The addon bundles GitHub's CA certificate, so this should be rare — see the *TLS and Certificate Security* section above. |
 | **Connection failed** | Check your internet connection and try again. |
 | **No changes to push** | Your local files already match what is on GitHub. |
 | **Push failed: X file(s) could not be uploaded** | One or more files failed to upload. Check the error messages above for details. A 403 error usually means a token permissions problem (see above). |
 | **Teacher access requires organization admin/owner privileges** | Only organization owners/admins can use the Teacher role. The addon automatically resets you to the Student role. Ask your organization admin to grant you the owner role, or use the Student role. |
 | **No repositories found** (Load My Assignments) | Make sure the organization name is correct and your token has access. Students: your GitHub username must appear in the repository name. |
 | **Authentication failed** (Load My Assignments) | Your token could not be verified. Check that it is correct and not expired. |
+
+---
+
+## TLS and Certificate Security
+
+The addon bundles GitHub's CA certificate chain (DigiCert Global Root G2 and the DigiCert TLS RSA SHA256 2020 CA1 intermediate) at `addons/github_classroom/certs/github-ca.crt`. This certificate is loaded at startup and used for all HTTPS connections to `api.github.com`, so Godot does not need to rely on its own system CA store.
+
+This means **full TLS certificate validation is always active** — connections to `api.github.com` are verified against the bundled certificate, protecting student tokens and data from interception. The connection is rejected if the certificate doesn't match.
+
+If you see a TLS error such as **"Connection failed (result 5)"**, ensure you are running **Godot 4.2 or later**. Earlier versions have unreliable TLS support.
 
 ---
 
@@ -226,14 +237,16 @@ addons/
     ├── plugin.cfg                  # Plugin metadata
     ├── plugin.gd                   # EditorPlugin entry point
     ├── github_api.gd               # GitHub REST API wrapper
-    └── github_classroom_dock.gd    # Dock panel UI + pull/push logic
+    ├── github_classroom_dock.gd    # Dock panel UI + pull/push logic
+    └── certs/
+        └── github-ca.crt          # Bundled DigiCert CA cert for api.github.com
 ```
 
 ---
 
 ## Requirements
 
-- **Godot 4.5** or later (tested with 4.5 and 4.6).
+- **Godot 4.2** or later (tested with 4.5 and 4.6).
 - A GitHub account with a Personal Access Token.
 - An internet connection.
 
