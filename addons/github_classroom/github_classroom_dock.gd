@@ -45,6 +45,9 @@ var _connected_label: Label
 var _last_saved_label: Label
 var _advanced_nodes: Array = []
 var _pull_confirm_dialog: ConfirmationDialog
+var _auto_push_mode_label: Label
+var _clean_pull_button: Button
+var _clean_pull_confirm_dialog: ConfirmationDialog
 
 # --- API node ---
 var _api: Node
@@ -53,6 +56,7 @@ var _api: Node
 var _github_username: String = ""
 var _is_pushing: bool = false
 var _loaded_repos: Array = []
+var _config_load_error: bool = false
 
 
 # ===========================================================================
@@ -65,8 +69,10 @@ func _ready() -> void:
 	_load_settings()
 	# Connect token-change signal after loading so it does not fire during init.
 	_token_input.text_changed.connect(_on_token_changed)
-	# First-run detection: show a welcome message if no token is configured yet.
-	if _token_input.text.strip_edges().is_empty():
+	# Show a context-appropriate status message on startup.
+	if _config_load_error:
+		_set_status("⚠️ [color=yellow]Settings file could not be read and has been reset. Please re-enter your settings and click Save Settings.[/color]")
+	elif _token_input.text.strip_edges().is_empty():
 		_set_status("ℹ️ Welcome! Enter your GitHub Token and Organization above, then click Save Settings and Load My Assignments.")
 
 
@@ -132,6 +138,7 @@ func _build_ui() -> void:
 	_auto_push_option.tooltip_text = "Automatically push changes when saving the project or closing the editor."
 	_auto_push_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vbox.add_child(_auto_push_option)
+	_auto_push_option.item_selected.connect(_on_auto_push_option_changed)
 	_advanced_nodes.append_array([auto_push_label, _auto_push_option])
 
 	_save_button = Button.new()
@@ -208,6 +215,19 @@ func _build_ui() -> void:
 	_last_saved_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vbox.add_child(_last_saved_label)
 
+	_auto_push_mode_label = Label.new()
+	_auto_push_mode_label.text = ""
+	_auto_push_mode_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(_auto_push_mode_label)
+
+	_clean_pull_button = Button.new()
+	_clean_pull_button.text = "🗑️ Clean Pull (Replace All Files)"
+	_clean_pull_button.tooltip_text = "Delete all local project files (keeping the addons folder) and download a fresh copy from GitHub. Use this when grading or switching student projects."
+	_clean_pull_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_clean_pull_button.pressed.connect(_on_clean_pull_pressed)
+	vbox.add_child(_clean_pull_button)
+	_advanced_nodes.append(_clean_pull_button)
+
 	vbox.add_child(HSeparator.new())
 
 	# ---- Progress / Status section ----
@@ -236,6 +256,14 @@ func _build_ui() -> void:
 	_pull_confirm_dialog.ok_button_text = "Yes, Download"
 	_pull_confirm_dialog.confirmed.connect(_on_pull_confirmed)
 	add_child(_pull_confirm_dialog)
+
+	# Clean pull confirmation dialog (destructive – stronger warning).
+	_clean_pull_confirm_dialog = ConfirmationDialog.new()
+	_clean_pull_confirm_dialog.title = "Replace All Project Files?"
+	_clean_pull_confirm_dialog.dialog_text = "This will DELETE all local project files (except the addons folder) and replace them with the latest version from GitHub.\n\nFiles that have NOT been pushed to GitHub will be permanently lost.\n\nThis cannot be undone. Continue?"
+	_clean_pull_confirm_dialog.ok_button_text = "Yes, Replace All Files"
+	_clean_pull_confirm_dialog.confirmed.connect(_on_clean_pull_confirmed)
+	add_child(_clean_pull_confirm_dialog)
 
 	# Initially hide all advanced nodes (simple mode by default).
 	for node in _advanced_nodes:
@@ -391,6 +419,10 @@ func _load_settings() -> void:
 		_advanced_toggle.button_pressed = advanced_mode
 		_apply_advanced_mode(advanced_mode)
 		_update_connected_label()
+		_update_auto_push_mode_label()
+	elif FileAccess.file_exists(_get_config_path()):
+		# Config file exists but could not be parsed (possibly corrupt).
+		_config_load_error = true
 
 
 # ===========================================================================
@@ -463,6 +495,7 @@ func _on_save_pressed() -> void:
 	_save_settings()
 	_set_status("✅ [color=green]Settings saved![/color]")
 	_update_connected_label()
+	_update_auto_push_mode_label()
 
 
 func _on_pull_pressed() -> void:
@@ -540,6 +573,23 @@ func _on_sign_out_pressed() -> void:
 	_save_settings()
 	_set_status("🔒 Signed out. Enter your GitHub Token to get started.")
 	_update_connected_label()
+
+
+func _on_clean_pull_pressed() -> void:
+	if not _configure_api():
+		return
+	_clean_pull_confirm_dialog.popup_centered()
+
+
+func _on_clean_pull_confirmed() -> void:
+	_set_buttons_enabled(false)
+	await _do_clean_pull()
+	_set_buttons_enabled(true)
+
+
+## Called when the Auto-Push dropdown selection changes.
+func _on_auto_push_option_changed(_index: int) -> void:
+	_update_auto_push_mode_label()
 
 
 # ===========================================================================
@@ -812,6 +862,17 @@ func _do_load_repos(org: String) -> void:
 			return
 		_append_status("✅ Verified as organization admin/owner.")
 
+		# Ensure auto-push is set to Manual for teachers to prevent
+		# accidentally overwriting student work.
+		if _auto_push_option.get_selected_id() != AUTO_PUSH_MANUAL:
+			for i in range(_auto_push_option.item_count):
+				if _auto_push_option.get_item_id(i) == AUTO_PUSH_MANUAL:
+					_auto_push_option.selected = i
+					break
+			_save_settings()
+			_update_auto_push_mode_label()
+			_append_status("⚠️ [color=yellow]Auto-push set to Manual to protect student work.[/color]")
+
 		# 3a – Load all org repos (paginated).
 		var page := 1
 		while true:
@@ -902,7 +963,7 @@ func _populate_teacher_tree() -> void:
 			seen_assignments[a] = true
 			assignment_order.append(a)
 
-	# 4 – Create tree items.
+	# 4 – Create assignment folder items.
 	var folder_items := {}  # assignment_name -> TreeItem
 	for assignment_name in assignment_order:
 		var folder := _repo_tree.create_item(root)
@@ -910,6 +971,12 @@ func _populate_teacher_tree() -> void:
 		folder.set_selectable(0, false)
 		folder.collapsed = true
 		folder_items[assignment_name] = folder
+
+	# Template repo name patterns (suffix-based detection).
+	const TEMPLATE_SUFFIXES := ["-template", "-starter", "-base", "-solution", "-demo"]
+	# Lazily-created folders for template and other (non-assignment) repos.
+	var template_folder: TreeItem = null
+	var extra_folder: TreeItem = null
 
 	for idx in range(_loaded_repos.size()):
 		var repo_name: String = str(_loaded_repos[idx].name)
@@ -921,9 +988,37 @@ func _populate_teacher_tree() -> void:
 			child.set_tooltip_text(0, repo_name)
 			child.set_metadata(0, idx)
 		else:
-			var child := _repo_tree.create_item(root)
-			child.set_text(0, repo_name)
-			child.set_metadata(0, idx)
+			# Determine whether this ungrouped repo is a template or an extra.
+			# A repo is treated as a template if its name exactly matches a known
+			# assignment prefix (e.g. the source repo named "project-1" alongside
+			# student repos "project-1-alice", "project-1-bob") or if it uses a
+			# common template-naming suffix.
+			var is_template := seen_assignments.has(repo_name)
+			if not is_template:
+				for suffix in TEMPLATE_SUFFIXES:
+					if repo_name.ends_with(suffix):
+						is_template = true
+						break
+			if is_template:
+				if template_folder == null:
+					template_folder = _repo_tree.create_item(root)
+					template_folder.set_text(0, "📋 Templates")
+					template_folder.set_selectable(0, false)
+					template_folder.collapsed = true
+				var child := _repo_tree.create_item(template_folder)
+				child.set_text(0, repo_name)
+				child.set_tooltip_text(0, repo_name)
+				child.set_metadata(0, idx)
+			else:
+				if extra_folder == null:
+					extra_folder = _repo_tree.create_item(root)
+					extra_folder.set_text(0, "📦 Other Repos")
+					extra_folder.set_selectable(0, false)
+					extra_folder.collapsed = true
+				var child := _repo_tree.create_item(extra_folder)
+				child.set_text(0, repo_name)
+				child.set_tooltip_text(0, repo_name)
+				child.set_metadata(0, idx)
 
 
 ## Build a flat tree view for students (no grouping).
@@ -959,6 +1054,58 @@ func _trigger_auto_push() -> void:
 	await _do_push()
 	_set_buttons_enabled(true)
 	_is_pushing = false
+
+
+# ===========================================================================
+# Clean pull logic
+# ===========================================================================
+
+## Delete all local project files except the addons/ directory, then
+## perform a normal pull.  Used by teachers when switching between student
+## projects to guarantee no stale files remain.
+func _do_clean_pull() -> void:
+	_set_status("⏳ [color=yellow]Preparing clean pull – removing local files...[/color]")
+	var project_path: String = ProjectSettings.globalize_path("res://")
+	_delete_files_except_addons(project_path, "")
+	_append_status("⏳ Downloading fresh copy from GitHub...")
+	await _do_pull()
+
+
+## Recursively delete all files and non-excluded directories under
+## base_path/relative_path, skipping the top-level "addons" directory
+## so the addon itself remains functional.
+func _delete_files_except_addons(base_path: String, relative_path: String) -> void:
+	var full_dir: String = base_path.path_join(relative_path) if not relative_path.is_empty() else base_path
+	var dir := DirAccess.open(full_dir)
+	if dir == null:
+		return
+
+	var subdirs: Array = []
+	var files_to_delete: Array = []
+
+	dir.list_dir_begin()
+	var entry := dir.get_next()
+	while not entry.is_empty():
+		var rel: String = (relative_path + "/" + entry) if not relative_path.is_empty() else entry
+		if dir.current_is_dir():
+			# Preserve the addons/ directory at the project root so the
+			# addon itself (and any other plugins) keep working.
+			var is_root_addons := (relative_path.is_empty() and entry == "addons")
+			if not is_root_addons and not entry in EXCLUDED_DIRS:
+				subdirs.append(rel)
+		else:
+			if not entry in EXCLUDED_FILES:
+				files_to_delete.append(rel)
+		entry = dir.get_next()
+	dir.list_dir_end()
+
+	# Recurse depth-first so directories are empty before we try to remove them.
+	for subdir in subdirs:
+		_delete_files_except_addons(base_path, subdir)
+		DirAccess.remove_absolute(base_path.path_join(subdir))
+
+	for file_rel in files_to_delete:
+		DirAccess.remove_absolute(base_path.path_join(file_rel))
 
 
 # ===========================================================================
@@ -1072,3 +1219,22 @@ func _update_last_saved_label() -> void:
 	elif hour == 0:
 		hour = 12
 	_last_saved_label.text = "Last saved to GitHub: Today at %d:%02d %s" % [hour, minute, am_pm]
+
+
+## Update the auto-push mode indicator label to reflect the current setting.
+## This label is always visible so both Simple and Advanced users can see
+## whether changes are uploaded automatically.
+func _update_auto_push_mode_label() -> void:
+	var mode_id := _auto_push_option.get_selected_id()
+	match mode_id:
+		AUTO_PUSH_MANUAL:
+			_auto_push_mode_label.text = "Upload mode: Manual only (use ⬆ Save to GitHub)"
+			_auto_push_mode_label.add_theme_color_override("font_color", Color.GRAY)
+		AUTO_PUSH_ON_SAVE:
+			_auto_push_mode_label.text = "Upload mode: Auto-push on every save ✓"
+			_auto_push_mode_label.add_theme_color_override("font_color", Color(0.4, 0.9, 0.4))
+		AUTO_PUSH_ON_CLOSE:
+			_auto_push_mode_label.text = "Upload mode: Auto-push when editor closes ✓"
+			_auto_push_mode_label.add_theme_color_override("font_color", Color(0.9, 0.7, 0.4))
+		_:
+			_auto_push_mode_label.text = ""
