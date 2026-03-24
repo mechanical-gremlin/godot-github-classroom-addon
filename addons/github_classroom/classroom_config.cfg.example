@@ -1,0 +1,31 @@
+; classroom_config.cfg.example
+;
+; This is an example of the classroom_config.cfg format used by the
+; GitHub Classroom Godot addon.
+;
+; HOW TO USE:
+;   1. Copy or edit addons/github_classroom/classroom_config.cfg in your
+;      template repository.
+;   2. Fill in the values below (see descriptions).
+;   3. Commit and push the file to your template repository on GitHub.
+;   4. When students accept the GitHub Classroom assignment and clone the
+;      repo, the addon will automatically read these values so students
+;      never need to enter the Client ID or Organization themselves.
+;
+; FIELDS:
+;   oauth_client_id  Your GitHub OAuth App Client ID.
+;                    • Create one at: GitHub → Settings → Developer Settings
+;                      → OAuth Apps → New OAuth App
+;                    • The Client ID is a PUBLIC identifier (starts with Ov23li).
+;                      It is safe to commit to a public or private repository.
+;                    • Enables the "Sign in with GitHub" button for students
+;                      without manual token setup.
+;
+;   organization     Your GitHub Classroom organization name, e.g. my-school-cs.
+;                    Students will see this pre-filled in the Organization field.
+;
+; Both fields are optional.  If absent, students can fill in the fields manually.
+
+[classroom]
+oauth_client_id=Ov23liXXXXXXXXXXXXXX
+organization=your-github-classroom-org

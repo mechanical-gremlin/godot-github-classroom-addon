@@ -7,6 +7,9 @@ extends Control
 
 # CONFIG_PATH is now per-OS-user; see _get_config_path() below.
 
+# Teacher-baked classroom config (committed to the template project repo).
+const _CLASSROOM_CONFIG_PATH := "res://addons/github_classroom/classroom_config.cfg"
+
 # Directories to skip when scanning/downloading project files.
 const EXCLUDED_DIRS := [".godot", ".git"]
 
@@ -60,6 +63,9 @@ var _is_pushing: bool = false
 var _loaded_repos: Array = []
 var _config_load_error: bool = false
 var _oauth_polling: bool = false
+# True when the OAuth Client ID was baked in via classroom_config.cfg.
+# Prevents _save_settings() from overwriting the teacher-supplied value.
+var _classroom_config_locked: bool = false
 
 
 # ===========================================================================
@@ -69,6 +75,7 @@ var _oauth_polling: bool = false
 func _ready() -> void:
 	_build_ui()
 	_setup_api()
+	_load_classroom_config()
 	_load_settings()
 	# Connect token-change signal after loading so it does not fire during init.
 	_token_input.text_changed.connect(_on_token_changed)
@@ -78,7 +85,10 @@ func _ready() -> void:
 	if _config_load_error:
 		_set_status("⚠️ [color=yellow]Settings file could not be read and has been reset. Please re-enter your settings and click Save Settings.[/color]")
 	elif _token_input.text.strip_edges().is_empty():
-		_set_status("ℹ️ Welcome! Enter your GitHub Token and Organization above, then click Save Settings and Load My Assignments.")
+		if _classroom_config_locked or not _client_id_input.text.strip_edges().is_empty():
+			_set_status("ℹ️ Welcome! Click 'Sign in with GitHub' to get started, then click Load My Assignments.")
+		else:
+			_set_status("ℹ️ Welcome! Use 'Show Advanced Options' to enter a GitHub Token, or ask your teacher to pre-configure the OAuth Client ID.")
 
 
 # ===========================================================================
@@ -124,10 +134,11 @@ func _build_ui() -> void:
 	_repo_url_input.tooltip_text = "Paste the repository link from GitHub Classroom here, or select one from the Classroom section below."
 	_advanced_nodes.append_array([repo_url_label, _repo_url_input])
 
-	_add_label(vbox, "GitHub Token:")
+	var token_label := _add_label(vbox, "GitHub Token:")
 	_token_input = _add_line_edit(vbox, "ghp_xxxxxxxxxxxx")
 	_token_input.secret = true
 	_token_input.tooltip_text = "Your GitHub Personal Access Token (ghp_… or github_pat_…), or an OAuth token (gho_…) obtained via Sign in with GitHub."
+	_advanced_nodes.append_array([token_label, _token_input])
 
 	_sign_in_button = Button.new()
 	_sign_in_button.text = "🔑 Sign in with GitHub"
@@ -244,7 +255,6 @@ func _build_ui() -> void:
 	_clean_pull_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_clean_pull_button.pressed.connect(_on_clean_pull_pressed)
 	vbox.add_child(_clean_pull_button)
-	_advanced_nodes.append(_clean_pull_button)
 
 	vbox.add_child(HSeparator.new())
 
@@ -337,7 +347,8 @@ func _get_os_username() -> String:
 
 
 ## Return a config-file path unique to the current OS-level desktop user.
-## This prevents Student A's token from loading when Student B logs in.
+## On Windows, uses AppData\Local (device-local, not synced by OneDrive).
+## On macOS/Linux, uses user:// (not cloud-synced by default).
 func _get_config_path() -> String:
 	var os_user := _get_os_username()
 	if os_user.is_empty():
@@ -354,7 +365,57 @@ func _get_config_path() -> String:
 			safe_user += "_"
 	if safe_user.is_empty():
 		safe_user = "default"
+
+	# On Windows, use AppData\Local (device-local, not synced by OneDrive).
+	var local_appdata := OS.get_environment("LOCALAPPDATA")
+	if not local_appdata.is_empty():
+		var dir_path := local_appdata.path_join("GodotGitHubClassroom")
+		if not DirAccess.dir_exists_absolute(dir_path):
+			DirAccess.make_dir_recursive_absolute(dir_path)
+		return dir_path.path_join("github_classroom_" + safe_user + ".cfg")
+
+	# macOS / Linux: user:// is fine (not cloud-synced by default).
 	return "user://github_classroom_" + safe_user + ".cfg"
+
+
+## Return the legacy config path (old user:// location, used for migration).
+func _get_legacy_config_path() -> String:
+	var os_user := _get_os_username()
+	if os_user.is_empty():
+		os_user = "default"
+	var safe_user := ""
+	for ch in os_user:
+		if (ch >= "0" and ch <= "9") or \
+		   (ch >= "A" and ch <= "Z") or \
+		   (ch >= "a" and ch <= "z") or \
+		   ch == "_":
+			safe_user += ch
+		else:
+			safe_user += "_"
+	if safe_user.is_empty():
+		safe_user = "default"
+	return "user://github_classroom_" + safe_user + ".cfg"
+
+
+## If a legacy user:// config exists but the new AppData\Local config does not,
+## copy the settings to the new location and delete the old file so the token
+## is no longer stored in AppData\Roaming (which OneDrive syncs).
+func _migrate_legacy_config() -> void:
+	var new_path := _get_config_path()
+	var legacy_path := _get_legacy_config_path()
+	if new_path == legacy_path:
+		return  # macOS / Linux: paths are the same, nothing to migrate.
+	if FileAccess.file_exists(new_path):
+		return  # New config already exists; migration not needed.
+	if not FileAccess.file_exists(legacy_path):
+		return  # No legacy config to migrate.
+	# Copy the legacy config to the new location.
+	var old_config := ConfigFile.new()
+	if old_config.load(legacy_path) != OK:
+		return
+	old_config.save(new_path)
+	# Remove the old file so the token no longer lives in AppData\Roaming.
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(legacy_path))
 
 
 # ===========================================================================
@@ -395,6 +456,29 @@ func _deobfuscate_token(obfuscated: String) -> String:
 # Settings persistence
 # ===========================================================================
 
+## Load the teacher-baked classroom config from the project template.
+## If oauth_client_id is set, pre-fills the Client ID field and locks it
+## so students cannot accidentally overwrite it.  If organization is set,
+## pre-fills the org field and locks it as well.
+func _load_classroom_config() -> void:
+	var config := ConfigFile.new()
+	if config.load(_CLASSROOM_CONFIG_PATH) != OK:
+		return
+	var client_id: String = config.get_value("classroom", "oauth_client_id", "")
+	if not client_id.is_empty():
+		_client_id_input.text = client_id
+		_client_id_input.editable = false
+		_client_id_input.tooltip_text = "OAuth Client ID set by your teacher in the project template (read-only)."
+		_classroom_config_locked = true
+	var org: String = config.get_value("classroom", "organization", "")
+	if not org.is_empty():
+		_org_input.text = org
+		_org_input.editable = false
+		_org_input.tooltip_text = "Organization set by your teacher in the project template (read-only)."
+	# Immediately reflect Client ID availability in Sign In button visibility.
+	_update_sign_in_button_visibility()
+
+
 func _save_settings() -> void:
 	var config := ConfigFile.new()
 	config.set_value("github", "repo_url", _repo_url_input.text)
@@ -404,11 +488,15 @@ func _save_settings() -> void:
 	config.set_value("github", "organization", _org_input.text)
 	config.set_value("github", "auto_push", _auto_push_option.get_selected_id())
 	config.set_value("github", "advanced_mode", _advanced_toggle.button_pressed)
-	config.set_value("github", "client_id", _client_id_input.text)
+	# Never save the client_id when it was baked in by the teacher via
+	# classroom_config.cfg — the project file is the source of truth.
+	if not _classroom_config_locked:
+		config.set_value("github", "client_id", _client_id_input.text)
 	config.save(_get_config_path())
 
 
 func _load_settings() -> void:
+	_migrate_legacy_config()
 	var config := ConfigFile.new()
 	if config.load(_get_config_path()) == OK:
 		_repo_url_input.text = config.get_value("github", "repo_url", "")
@@ -424,7 +512,6 @@ func _load_settings() -> void:
 			config.save(_get_config_path())
 		_branch_input.text = config.get_value("github", "branch", "main")
 		_role_option.selected = config.get_value("github", "role", 0)
-		_org_input.text = config.get_value("github", "organization", "")
 		# Load auto_push by ID so reordered items work correctly.
 		# The saved integer values (0=Manual, 1=OnSave, 2=OnClose) match the
 		# AUTO_PUSH_* constants exactly, so this is also backward-compatible
@@ -437,7 +524,13 @@ func _load_settings() -> void:
 		var advanced_mode: bool = config.get_value("github", "advanced_mode", false)
 		_advanced_toggle.button_pressed = advanced_mode
 		_apply_advanced_mode(advanced_mode)
-		_client_id_input.text = config.get_value("github", "client_id", "")
+		# Only load client_id from user config when not baked in via classroom_config.cfg.
+		if not _classroom_config_locked:
+			_client_id_input.text = config.get_value("github", "client_id", "")
+		# If classroom config locked the org field, do not overwrite it with
+		# whatever the user config stored — the project file is authoritative.
+		if _org_input.editable:
+			_org_input.text = config.get_value("github", "organization", "")
 		_update_connected_label()
 		_update_auto_push_mode_label()
 		_update_sign_in_button_visibility()
@@ -591,7 +684,9 @@ func _on_sign_out_pressed() -> void:
 	_sign_in_button.text = "🔑 Sign in with GitHub"
 	_set_buttons_enabled(true)
 	_token_input.text = ""
-	_org_input.text = ""
+	# Preserve org and repo_url only if they are locked by classroom_config.cfg.
+	if _org_input.editable:
+		_org_input.text = ""
 	_repo_url_input.text = ""
 	_role_option.selected = 0
 	_loaded_repos.clear()
@@ -624,8 +719,10 @@ func _on_auto_push_option_changed(_index: int) -> void:
 # ===========================================================================
 
 ## Show or hide the Sign-in button based on whether a Client ID is configured.
+## Visible whenever a Client ID is available — either baked in via
+## classroom_config.cfg or previously saved in the per-user config.
 func _update_sign_in_button_visibility() -> void:
-	_sign_in_button.visible = not _client_id_input.text.strip_edges().is_empty()
+	_sign_in_button.visible = _classroom_config_locked or not _client_id_input.text.strip_edges().is_empty()
 
 
 ## Called when "🔑 Sign in with GitHub" is clicked.
