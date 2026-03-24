@@ -30,9 +30,11 @@ var _org_input: LineEdit
 var _repo_url_input: LineEdit
 var _token_input: LineEdit
 var _branch_input: LineEdit
+var _client_id_input: LineEdit
 var _auto_push_option: OptionButton
 var _save_button: Button
 var _sign_out_button: Button
+var _sign_in_button: Button
 var _load_repos_button: Button
 var _repo_tree: Tree
 var _commit_msg_input: TextEdit
@@ -57,6 +59,7 @@ var _github_username: String = ""
 var _is_pushing: bool = false
 var _loaded_repos: Array = []
 var _config_load_error: bool = false
+var _oauth_polling: bool = false
 
 
 # ===========================================================================
@@ -69,6 +72,8 @@ func _ready() -> void:
 	_load_settings()
 	# Connect token-change signal after loading so it does not fire during init.
 	_token_input.text_changed.connect(_on_token_changed)
+	# Update sign-in button visibility when the client_id field is edited.
+	_client_id_input.text_changed.connect(func(_t: String) -> void: _update_sign_in_button_visibility())
 	# Show a context-appropriate status message on startup.
 	if _config_load_error:
 		_set_status("⚠️ [color=yellow]Settings file could not be read and has been reset. Please re-enter your settings and click Save Settings.[/color]")
@@ -122,13 +127,26 @@ func _build_ui() -> void:
 	_add_label(vbox, "GitHub Token:")
 	_token_input = _add_line_edit(vbox, "ghp_xxxxxxxxxxxx")
 	_token_input.secret = true
-	_token_input.tooltip_text = "Your GitHub Personal Access Token (starts with ghp_ or github_pat_)."
+	_token_input.tooltip_text = "Your GitHub Personal Access Token (ghp_… or github_pat_…), or an OAuth token (gho_…) obtained via Sign in with GitHub."
+
+	_sign_in_button = Button.new()
+	_sign_in_button.text = "🔑 Sign in with GitHub"
+	_sign_in_button.tooltip_text = "Sign in using GitHub OAuth — no manual token needed. Requires an OAuth Client ID set by your teacher in the project template."
+	_sign_in_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_sign_in_button.pressed.connect(_on_sign_in_pressed)
+	_sign_in_button.visible = false  # shown only when an OAuth Client ID is configured
+	vbox.add_child(_sign_in_button)
 
 	var branch_label := _add_label(vbox, "Branch:")
 	_branch_input = _add_line_edit(vbox, "main")
 	_branch_input.text = "main"
 	_branch_input.tooltip_text = "Usually 'main'. Only change this if your teacher tells you to."
 	_advanced_nodes.append_array([branch_label, _branch_input])
+
+	var client_id_label := _add_label(vbox, "OAuth Client ID:")
+	_client_id_input = _add_line_edit(vbox, "Ov23liXXXXXXXXXXXXXX")
+	_client_id_input.tooltip_text = "GitHub OAuth App Client ID (starts with Ov23li…). Set once by the teacher in the template project. Students then use 'Sign in with GitHub' instead of a manual token."
+	_advanced_nodes.append_array([client_id_label, _client_id_input])
 
 	var auto_push_label := _add_label(vbox, "Auto-Push:")
 	_auto_push_option = OptionButton.new()
@@ -386,6 +404,7 @@ func _save_settings() -> void:
 	config.set_value("github", "organization", _org_input.text)
 	config.set_value("github", "auto_push", _auto_push_option.get_selected_id())
 	config.set_value("github", "advanced_mode", _advanced_toggle.button_pressed)
+	config.set_value("github", "client_id", _client_id_input.text)
 	config.save(_get_config_path())
 
 
@@ -418,8 +437,10 @@ func _load_settings() -> void:
 		var advanced_mode: bool = config.get_value("github", "advanced_mode", false)
 		_advanced_toggle.button_pressed = advanced_mode
 		_apply_advanced_mode(advanced_mode)
+		_client_id_input.text = config.get_value("github", "client_id", "")
 		_update_connected_label()
 		_update_auto_push_mode_label()
+		_update_sign_in_button_visibility()
 	elif FileAccess.file_exists(_get_config_path()):
 		# Config file exists but could not be parsed (possibly corrupt).
 		_config_load_error = true
@@ -485,6 +506,7 @@ func _set_buttons_enabled(enabled: bool) -> void:
 	_save_button.disabled = not enabled
 	_sign_out_button.disabled = not enabled
 	_load_repos_button.disabled = not enabled
+	_sign_in_button.disabled = not enabled
 
 
 # ===========================================================================
@@ -496,6 +518,7 @@ func _on_save_pressed() -> void:
 	_set_status("✅ [color=green]Settings saved![/color]")
 	_update_connected_label()
 	_update_auto_push_mode_label()
+	_update_sign_in_button_visibility()
 
 
 func _on_pull_pressed() -> void:
@@ -563,6 +586,10 @@ func _on_token_changed(_new_text: String) -> void:
 
 ## Sign out: wipe all credentials from the UI and persist the cleared state.
 func _on_sign_out_pressed() -> void:
+	# Cancel any in-progress OAuth device flow before wiping credentials.
+	_oauth_polling = false
+	_sign_in_button.text = "🔑 Sign in with GitHub"
+	_set_buttons_enabled(true)
 	_token_input.text = ""
 	_org_input.text = ""
 	_repo_url_input.text = ""
@@ -590,6 +617,160 @@ func _on_clean_pull_confirmed() -> void:
 ## Called when the Auto-Push dropdown selection changes.
 func _on_auto_push_option_changed(_index: int) -> void:
 	_update_auto_push_mode_label()
+
+
+# ===========================================================================
+# OAuth Device Flow
+# ===========================================================================
+
+## Show or hide the Sign-in button based on whether a Client ID is configured.
+func _update_sign_in_button_visibility() -> void:
+	_sign_in_button.visible = not _client_id_input.text.strip_edges().is_empty()
+
+
+## Called when "🔑 Sign in with GitHub" is clicked.
+## If a flow is already in progress the button acts as a cancel.
+func _on_sign_in_pressed() -> void:
+	if _oauth_polling:
+		# Cancel the ongoing flow; the coroutine cleans up the UI when it
+		# detects the flag is false at its next iteration.
+		_oauth_polling = false
+		return
+	var client_id := _client_id_input.text.strip_edges()
+	if client_id.is_empty():
+		_set_status("❌ [color=red]No OAuth Client ID is configured. Ask your teacher to set one up in the project template.[/color]")
+		return
+	await _do_oauth_device_flow(client_id)
+
+
+## Run the full GitHub OAuth Device Flow.
+## Asks GitHub for a device code, shows it to the user, opens their browser,
+## and polls until the user authorizes (or the code expires / is cancelled).
+func _do_oauth_device_flow(client_id: String) -> void:
+	_oauth_polling = true
+	_sign_in_button.text = "⏳ Waiting… (click to cancel)"
+	_set_buttons_enabled(false)
+	_sign_in_button.disabled = false  # keep enabled so the user can cancel
+
+	# Step 1 — ask GitHub for a device code.
+	_set_status("⏳ [color=yellow]Starting sign-in with GitHub...[/color]")
+	var code_result := await _api.request_device_code(client_id)
+
+	if not _oauth_polling:
+		_cleanup_oauth_ui()
+		_set_status("🔒 Sign-in cancelled.")
+		return
+
+	if code_result.has("error"):
+		_set_status("❌ [color=red]Could not start sign-in: " + str(code_result.error) + "[/color]")
+		_cleanup_oauth_ui()
+		return
+
+	var code_data = code_result.data
+	if not code_data is Dictionary or code_data.has("error"):
+		var err_desc: String
+		if code_data is Dictionary:
+			err_desc = str(code_data.get("error_description", code_data.get("error", "Unknown error")))
+		else:
+			err_desc = "Unexpected response format"
+		_set_status("❌ [color=red]GitHub error: " + err_desc + "[/color]")
+		_cleanup_oauth_ui()
+		return
+
+	var user_code: String = str(code_data.get("user_code", ""))
+	var device_code: String = str(code_data.get("device_code", ""))
+	var verification_uri: String = str(code_data.get("verification_uri", "https://github.com/login/device"))
+	var interval: int = int(code_data.get("interval", 5))
+	var expires_in: int = int(code_data.get("expires_in", 900))
+
+	if user_code.is_empty() or device_code.is_empty():
+		_set_status("❌ [color=red]Invalid device code response from GitHub.[/color]")
+		_cleanup_oauth_ui()
+		return
+
+	# Open the browser automatically (best-effort).
+	OS.shell_open(verification_uri)
+
+	_set_status(
+		"🔑 [b]Open your browser and enter this code:[/b]\n\n" +
+		"   URL:  [color=cyan]" + verification_uri + "[/color]\n" +
+		"   Code: [color=cyan][b]" + user_code + "[/b][/color]\n\n" +
+		"[color=gray]The page should have opened automatically.\n" +
+		"Click the button above to cancel.[/color]"
+	)
+
+	# Step 2 — poll until authorized, expired, or cancelled.
+	var elapsed := 0
+	var cancelled := false
+	var terminal_status := ""
+
+	while _oauth_polling and elapsed < expires_in:
+		await get_tree().create_timer(float(interval)).timeout
+		elapsed += interval
+
+		if not _oauth_polling:
+			cancelled = true
+			break
+
+		var token_result := await _api.poll_device_token(client_id, device_code)
+
+		if not _oauth_polling:
+			cancelled = true
+			break
+
+		if token_result.has("error"):
+			terminal_status = "❌ [color=red]Connection error: " + str(token_result.error) + "[/color]"
+			break
+
+		var token_data = token_result.data
+		if not token_data is Dictionary:
+			terminal_status = "❌ [color=red]Unexpected response from GitHub.[/color]"
+			break
+
+		if token_data.has("access_token"):
+			# ✅ Authorization complete.
+			_oauth_polling = false
+			_token_input.text = str(token_data.access_token)
+			_save_settings()
+			_update_connected_label()
+			_set_status("✅ [color=green]Signed in to GitHub! Your token has been saved.\nYou can now click Load My Assignments.[/color]")
+			_cleanup_oauth_ui()
+			return
+
+		var error_code: String = str(token_data.get("error", ""))
+		match error_code:
+			"authorization_pending":
+				pass  # keep polling
+			"slow_down":
+				interval = int(token_data.get("interval", interval + 5))
+			"expired_token":
+				terminal_status = "❌ [color=red]The sign-in code has expired. Click Sign in with GitHub to try again.[/color]"
+				break
+			"access_denied":
+				terminal_status = "❌ [color=red]Authorization was denied. Click Sign in with GitHub to try again.[/color]"
+				break
+			_:
+				var desc: String = str(token_data.get("error_description", error_code))
+				terminal_status = "❌ [color=red]GitHub error: " + desc + "[/color]"
+				break
+
+	_oauth_polling = false
+	_cleanup_oauth_ui()
+
+	if cancelled:
+		_set_status("🔒 Sign-in cancelled.")
+	elif terminal_status != "":
+		_set_status(terminal_status)
+	else:
+		# Loop exited because elapsed >= expires_in without a terminal error.
+		_set_status("❌ [color=red]Sign-in timed out. Click Sign in with GitHub to try again.[/color]")
+
+
+## Reset OAuth UI state and re-enable buttons after the flow ends.
+func _cleanup_oauth_ui() -> void:
+	_oauth_polling = false
+	_sign_in_button.text = "🔑 Sign in with GitHub"
+	_set_buttons_enabled(true)
 
 
 # ===========================================================================

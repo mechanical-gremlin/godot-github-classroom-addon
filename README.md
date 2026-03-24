@@ -17,6 +17,7 @@ Everything happens through a small panel inside the Godot editor, making it idea
 | **Simple / Advanced View** | A toggle hides advanced options by default so beginners only see what they need. |
 | **Teacher / Student Roles** | Teachers can browse all student repos in an organization; students see only their own. Teacher access requires verified organization admin/owner status. |
 | **Classroom Repo Browser** | Load and select repositories from a GitHub Classroom organization. Click **Load My Assignments** to browse. |
+| **🔑 Sign in with GitHub (OAuth)** | One-click GitHub sign-in using OAuth Device Flow — no manual token generation needed. Students enter a short browser code and are signed in automatically. Requires a one-time teacher setup (see below). |
 | **No Git required** | Uses the GitHub REST API directly — Git does not need to be installed. |
 | **Simple UI** | One panel with only the controls students need. |
 | **🔒 Sign Out button** | Clears your token and settings with one click — use it before logging out of a shared computer. |
@@ -31,7 +32,8 @@ Everything happens through a small panel inside the Godot editor, making it idea
 
 1. Copy the `addons/github_classroom/` folder into your Godot project's `addons/` directory.
 2. Open the project in Godot, go to **Project → Project Settings → Plugins** and enable **GitHub Classroom**.
-3. Commit the project (including the addon) to your GitHub Classroom template repository.
+3. *(Optional but recommended)* Set up an OAuth App so students can sign in with one click instead of generating a manual token — see **[Option C — Sign in with GitHub (OAuth)](#option-c--sign-in-with-github-oauth--recommended-for-courses)** below for the five-minute setup.
+4. Commit the project (including the addon and the updated settings file) to your GitHub Classroom template repository.
 
 ### For Students — First-Time Setup
 
@@ -53,7 +55,8 @@ Everything happens through a small panel inside the Godot editor, making it idea
 
 ## Creating a GitHub Personal Access Token
 
-Students need a token so the addon can talk to GitHub on their behalf.
+Students need a token so the addon can talk to GitHub on their behalf.  
+**If your teacher has set up the OAuth App you can skip this section entirely** — just click **🔑 Sign in with GitHub** instead (see [Option C](#option-c--sign-in-with-github-oauth--recommended-for-courses) below).
 
 ### Option A — Classic Token (Recommended for GitHub Classroom)
 
@@ -84,6 +87,48 @@ Fine-grained tokens offer narrower permissions but may require extra setup for o
 > **Important for teachers / org admins:** GitHub organizations must explicitly opt in to allow fine-grained personal access tokens. Go to **Organization Settings → Personal access tokens → Settings** and enable *Allow access via fine-grained personal access tokens*. If this is not enabled, students will get **HTTP 403** errors when pushing. Using a **classic token** (Option A) avoids this requirement.
 
 > **Tip for teachers:** Walk students through the token creation process once at the beginning of the course. The token only needs to be created once per repository.
+
+---
+
+### Option C — Sign in with GitHub (OAuth) — Recommended for Courses
+
+This is the easiest flow for students. Instead of generating and pasting a long token, students click a button in Godot, enter a short code in their browser, and they are signed in automatically.  
+No hosted server or website is required. The addon communicates directly with GitHub.
+
+#### One-time teacher setup
+
+1. Go to **GitHub → Your profile picture → Settings → Developer Settings → OAuth Apps → New OAuth App**.
+2. Fill in the registration form:
+
+   | Field | What to enter |
+   |---|---|
+   | **Application name** | `Godot GitHub Classroom` (or any name students will recognise on the consent screen) |
+   | **Homepage URL** | Your organization's GitHub URL, e.g. `https://github.com/YOUR-ORG` — this is display-only; GitHub shows it on the consent screen as "learn more". No hosted site is needed. |
+   | **Authorization callback URL** | `https://github.com/mechanical-gremlin/godot-github-classroom-addon` — **required by the form but never used** by Device Flow (there is no redirect). Put any valid HTTPS URL here. |
+
+3. Click **Register Application**.
+4. Copy the **Client ID** shown on the app page. It is a public 20-character string that starts with `Ov23li` — it is not a secret and is safe to commit to the repository.
+5. In your Godot classroom template project:
+   - Enable **Show Advanced Options** in the GitHubClassroom dock.
+   - Paste the Client ID into the **OAuth Client ID** field.
+   - Click **Save Settings**.
+6. Share the Client ID with your students via your course instructions or LMS (e.g., "Paste `Ov23liXXXXXXXXXXXXXX` into the OAuth Client ID field under Show Advanced Options"). Students paste it once at the start of the course.
+
+> **Why share it rather than commit it?** The addon's settings are stored in a per-OS-user file (`user://github_classroom_<username>.cfg`) that is not part of the Git repository. This is by design — it keeps each student's token private. Because the Client ID is a **public** identifier (not a secret), sharing it in your syllabus or LMS is the standard approach every desktop OAuth app uses.
+
+> **Simpler distribution:** Because the Client ID is public, you can also just tell students "paste `Ov23liXXXXXXXXXXXXXX` into the OAuth Client ID field under Show Advanced Options". No secrets are involved.
+
+#### Student workflow (Option C)
+
+1. Open the Godot project your teacher provided.
+2. Enter the **Organization** name in the GitHubClassroom panel.
+3. If the teacher has configured an OAuth Client ID, you will see a **🔑 Sign in with GitHub** button — click it.
+4. A short code (e.g., `WDJB-MJHT`) appears in the Status panel and your browser opens automatically to `https://github.com/login/device`.
+5. Enter the code on that page and click **Authorize**.
+6. Back in Godot the panel detects the authorization and fills in your token automatically.
+7. Click **Load My Assignments** and proceed as normal.
+
+> **Tip:** Codes expire after 15 minutes. If yours expires before you authorize, just click **🔑 Sign in with GitHub** again to get a fresh one.
 
 ---
 
@@ -205,7 +250,7 @@ The addon is designed to be safe on shared desktop machines (computer labs) wher
 | Message | What to Do |
 |---------|------------|
 | **Invalid repository URL** | Make sure the URL looks like `https://github.com/owner/repo`. |
-| **HTTP 401: Bad credentials** | Your token is invalid or expired. Generate a new one. |
+| **HTTP 401: Bad credentials** | Your token is invalid or expired. Generate a new one, or click 🔑 Sign in with GitHub to re-authenticate. |
 | **HTTP 403: Resource not accessible by personal access token** | Your token does not have write permission. This is common with **fine-grained tokens** and organization (GitHub Classroom) repositories. **Fix:** Create a **classic token** with the `repo` scope instead (see *Creating a GitHub Personal Access Token — Option A* above). If you prefer fine-grained tokens, make sure the organization allows them and that the **Resource owner** is the organization, not your personal account. |
 | **HTTP 403: …** (other messages) | Your token does not have the required permissions. Make sure **Contents → Read and write** is enabled (fine-grained) or the **repo** scope is checked (classic). |
 | **HTTP 404: Not Found** | Double-check the repository URL and make sure your token has access to that repository. |
@@ -216,6 +261,11 @@ The addon is designed to be safe on shared desktop machines (computer labs) wher
 | **Teacher access requires organization admin/owner privileges** | Only organization owners/admins can use the Teacher role. The addon automatically resets you to the Student role. Ask your organization admin to grant you the owner role, or use the Student role. |
 | **No repositories found** (Load My Assignments) | Make sure the organization name is correct and your token has access. Students: your GitHub username must appear in the repository name. |
 | **Authentication failed** (Load My Assignments) | Your token could not be verified. Check that it is correct and not expired. |
+| **No OAuth Client ID is configured** (Sign in with GitHub) | The teacher has not added an OAuth Client ID to the project template. Use Option A or B (Personal Access Token) instead, or ask your teacher to complete the OAuth App setup. |
+| **Browser did not open / sign-in code not showing** | Make sure you have a default browser configured on your system. The code and URL are always shown in the Status panel — navigate to `https://github.com/login/device` manually if the browser did not open. |
+| **Sign-in code expired** | Codes are valid for 15 minutes. Click **🔑 Sign in with GitHub** again to get a new code. |
+| **GitHub error: incorrect_client_credentials** | The OAuth Client ID in the project settings is wrong. The teacher needs to re-check the Client ID from their GitHub OAuth App page and update the **OAuth Client ID** field. |
+| **Authorization was denied** | You (or a previous user) clicked Deny on the GitHub consent screen. Click **🔑 Sign in with GitHub** again and click **Authorize** this time. |
 
 ---
 
@@ -230,7 +280,7 @@ The addon bundles two DigiCert root CA certificates at `addons/github_classroom/
 
 Both roots are included because GitHub rotates between them. Both certificates are self-signed root CAs extracted from the standard system CA bundle and verified against their DER byte-length fields.
 
-These certificates are loaded at startup via `X509Certificate.load()` and passed to `TLSOptions.client()`. Every HTTPS request to `api.github.com` is verified against this bundled chain, so the addon does not depend on Godot's built-in system CA store (which is absent on some Godot 4.x builds).
+These certificates are loaded at startup via `X509Certificate.load()` and passed to `TLSOptions.client()`. Every HTTPS request to `api.github.com` **and** `github.com` (used by the OAuth Device Flow) is verified against this bundled chain, so the addon does not depend on Godot's built-in system CA store (which is absent on some Godot 4.x builds).
 
 **Full TLS certificate chain validation is always active** — `TLSOptions.client_unsafe()` is never used. A connection to `api.github.com` is rejected if its certificate cannot be verified against the bundled roots, protecting student GitHub Personal Access Tokens from interception.
 

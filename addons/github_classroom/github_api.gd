@@ -216,3 +216,77 @@ func get_user_repos(page: int = 1) -> Dictionary:
 		HTTPClient.METHOD_GET,
 		"/user/repos?per_page=100&page=%d&affiliation=collaborator,organization_member&sort=updated&direction=desc" % [page],
 	)
+
+
+# ---------------------------------------------------------------------------
+# OAuth Device Flow (no server or callback URL required)
+# ---------------------------------------------------------------------------
+
+## Request a device code for the GitHub OAuth Device Flow.
+## [param client_id] is the OAuth App's Client ID (a public identifier, not a secret).
+## Returns {"data": {...}} on success or {"error": "..."} on a connection/parse failure.
+## Callers should check data["user_code"] and data["device_code"].
+func request_device_code(client_id: String) -> Dictionary:
+	return await _make_device_flow_request(
+		"/login/device/code",
+		{"client_id": client_id, "scope": "repo"},
+	)
+
+
+## Poll GitHub for an access token after the user has entered the device code.
+## Returns {"data": {...}} for every HTTP response (callers must inspect data["error"]
+## for soft OAuth states such as "authorization_pending", "slow_down",
+## "expired_token", or "access_denied").
+## Returns {"error": "..."} only on transport / connection failures.
+func poll_device_token(client_id: String, device_code: String) -> Dictionary:
+	return await _make_device_flow_request(
+		"/login/oauth/access_token",
+		{
+			"client_id": client_id,
+			"device_code": device_code,
+			"grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+		},
+	)
+
+
+## Internal HTTP helper for the Device Flow endpoints on github.com.
+## Unlike _make_request(), this sends no Authorization header and posts to
+## https://github.com rather than https://api.github.com.
+## Returns {"data": parsed_json} for any parseable HTTP response (including
+## OAuth soft-error bodies), or {"error": "..."} on transport/parse failures.
+func _make_device_flow_request(endpoint: String, body: Dictionary) -> Dictionary:
+	var http := HTTPRequest.new()
+	add_child(http)
+	if _tls_options != null:
+		http.set_tls_options(_tls_options)
+
+	var url := "https://github.com" + endpoint
+	var headers := PackedStringArray([
+		"Accept: application/json",
+		"Content-Type: application/json",
+		"User-Agent: GodotGitHubClassroom/1.0",
+	])
+
+	var error := http.request(url, headers, HTTPClient.METHOD_POST, JSON.stringify(body))
+	if error != OK:
+		http.queue_free()
+		return {"error": "Failed to start request (error %d)" % error}
+
+	var response: Array = await http.request_completed
+	http.queue_free()
+
+	var result: int = response[0]
+	var response_body: PackedByteArray = response[3]
+
+	if result != HTTPRequest.RESULT_SUCCESS:
+		return {"error": "Connection failed (result %d). Check your internet connection." % result}
+
+	var json_text := response_body.get_string_from_utf8()
+	if json_text.strip_edges().is_empty():
+		return {"error": "Empty response from server"}
+
+	var parsed = JSON.parse_string(json_text)
+	if parsed == null:
+		return {"error": "Failed to parse server response"}
+
+	return {"data": parsed}
